@@ -5,13 +5,10 @@ steps:
 - script: |
     curl -L https://nixos.org/nix/install | sh
     . ~/.nix-profile/etc/profile.d/nix.sh
-    # Use Cachix so that we don't spend most of our time building GHC
-    nix-env -iA cachix -f https://cachix.org/api/v1/install
-    cachix use nix-tools
   displayName: 'Install Nix'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
-    nix-build nix/release.nix -A elemental.components.library -o result-build
+    nix-build nix/release.nix -A elemental.components.library -o result-build --option extra-binary-caches https://hydra.iohk.io
     nix-build nix/release.nix -A elemental.components.library.doc -o result-doc
   displayName: 'Build'
 - script: |
