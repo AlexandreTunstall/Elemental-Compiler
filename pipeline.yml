@@ -9,7 +9,6 @@ steps:
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
     nix-build nix/release.nix -A elemental.components.library -o result-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys 'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ='
-    nix-build nix/release.nix -A elemental.components.library.doc -o result
   displayName: 'Build'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
@@ -23,9 +22,3 @@ steps:
     searchFolder: '$(System.DefaultWorkingDirectory)/result-test'
     buildPlatform: 'Linux'
     failTaskOnFailedTests: true
-- task: PublishPipelineArtifact@1
-  displayName: 'Publish Documentation'
-  inputs:
-    targetPath: '$(System.DefaultWorkingDirectory)/result-doc'
-    artifact: 'Documentation'
-    publishLocation: 'pipeline'
