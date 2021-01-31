@@ -427,6 +427,190 @@ Then, the user is responsible for managing the userdata pointer that may or may 
 For simplicity, support for callbacks could be omitted entirely.
 The user would then be required to write code in a foreign language to create a callback that then calls an exported function and they are free to add whatever userdata they want when doing so.
 
+# Compilation via Interpretation
+
+Since we know that the program must terminate, we can take advantage of it by interpreting it by replacing primitives with operations that generate LLVM code.
+Effectively, the source code would be interpreted in a way that generates a program with the corresponding functionality.
+In other words, the `IO` object for the program is not just a construct for IO, but is constructed by the compiler at compile time.
+
+* `pureIO : ∀ 0 -> IO 0`
+  Emit the code to write the input value to a register, and output the corresponding operand.
+* `bindIO : ∀ IO 1 -> ∀ (1 -> IO 0) -> IO 0`
+  Emit the code read the input operand, perform the operation described by the function on it, and output the corresponding operand.
+
+Concretely, an `IO a` therefore represents a list of instructions to emit and the operand containing the IO result of type `a`.
+
+How should foreign imports be handled?
+Let's consider an example program that would read a character from `stdin` and write it back out to `stdout`.
+
+```
+-- Type aliases used here to keep the program legible
+type () = ∀ 0 -> 0
+type Bit = ∀ 0 -> 0 -> 0
+type Char = ∀ (Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) -> 0
+
+-- Note: this ignores error codes
+foreign import c_getchar "getchar" : IO Char
+foreign import c_putchar "putchar" : Char -> IO ()
+
+foreign export "main" = main : IO ()
+main = bindIO @Char c_getchar @() c_putchar : IO ()
+```
+
+Intuitively, `c_getchar` is equivalent to emitting a call to `getchar` and the operand corresponding to the return value of the call.
+`c_putchar` is equivalent to a function that converts the input `Char` function into the corresponding `i8` and emits a call to `putchar`.
+
+To achieve this, the implementation will need some internal primitives that are used within the compiler pipeline to produce the program.
+
+* Primitive `i#` types to correspond to LLVM types and corresponding constructors, which represent an LLVM operand of the corresponding type.
+* LLVM vector syntax to construct an `i#` from `i1`.
+* `#0 : i1` and `#1 : i1`.
+* `i1tobit : i1 -> Bit` that converts `#0` into `Λ λ0 λ0 0` and `#1` into `Λ λ0 λ0 1`
+* `i#toi1s : i# -> ∀ (i1 -> ... -> i1 -> 0) -> 0` that converts an `i#` into the corresponding vector of `i1`.
+* `call"{func}"` primitive to call the native `{func}` function (or some similar mechanism to replace the high-level foreign import call) which, unlike the corresponding foreign import, has a primitive LLVM type.
+* `purei# : i# -> IO i#` primitive to emit `i#` values.
+* `bindi# : IO (∀ (Bit -> ... -> Bit -> 0) -> 0) -> ∀ (i# -> IO 0) -> IO 0` primitive to compose `IO`.
+
+Let's consider a more complex example: suppose we wanted to replace the read LSB with 0 before writing to `stdout`.
+
+```
+-- Haskell equivalent: c_getchar >>= pure . overwrite >>= c_putchar
+main = bindIO @Char @() (bindIO @Char @Char c_getchar (λChar pureIO @Char (overwrite 0))) c_putchar : IO ()
+
+-- Haskell equivalent: \x -> x @Char (\a b c d e f g _ y -> y a b c d e f g (\_ z -> z))
+overwrite = λChar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) : Char -> Char
+```
+
+In the above example, the function parameter to the inner `bindIO` does not normalise into a foreign function reference, meaning that the function has to somehow be emitted.
+Let's try substituting primitives and imports with corresponding code.
+We use `#0 : i8` to denote the constant value `0` of LLVM type `i8`.
+For simplicity, we treat `i8` and `<8 x i1>` as the same type (where the vector is ordered from MSB to LSB), even though this is not the case in LLVM.
+For the implementation, see https://stackoverflow.com/questions/61647221/is-llvm-bitcast-from-vector-of-bool-i1-to-i8-i16-etc-well-defined.
+
+```
+-- type IO a = ∀ (Instrs -> Operand (LLVM a) -> 0) -> 0
+-- type LLVM Char = i8
+
+pureIO @Char = λChar purei8 (chartoi8 0) : Char -> IO Char
+bindIO @Char = Λ λ(IO Char) λ(Char -> IO 0) bindi8 1 @0 (λi8 1 (i8tochar 0)) : ∀ IO Char -> (Char -> IO 0) -> IO 0
+
+chartoi8 = λChar 0 @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>) : Char -> i8
+i8tochar = λi8 i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) : i8 -> Char
+
+c_getchar = call"i8 getchar()" : IO Char
+c_putchar = λChar call"void putchar(i8)" (chartoi8 0) : Char -> IO ()
+
+main = bindIO @Char @() (bindIO @Char @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) c_putchar : IO ()
+-- After substitution and normalisation:
+--   = (Λ λ(IO Char) λ(Char -> IO 0) bindi8 1 @0 (λi8 1 (i8tochar 0))) @() (bindIO @Char @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) c_putchar : IO ()
+--   = (λ(IO Char) λ(Char -> IO ()) bindi8 1 @() (λi8 1 (i8tochar 0))) (bindIO @Char @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) c_putchar : IO ()
+--   = (λ(Char -> IO ()) bindi8 (bindIO @Char @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 1 (i8tochar 0))) c_putchar : IO ()
+--   = bindi8 (bindIO @Char @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 ((Λ λ(IO Char) λ(Char -> IO 0) bindi8 1 @0 (λi8 1 (i8tochar 0))) @Char c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 ((λ(IO Char) λ(Char -> IO Char) bindi8 1 @Char (λi8 1 (i8tochar 0))) c_getchar (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 ((λ(Char -> IO Char) bindi8 c_getchar @Char (λi8 1 (i8tochar 0))) (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 c_getchar @Char (λi8 (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)))) (i8tochar 0))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 (λChar pureIO @Char (0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)))) (i8tochar 0))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 pureIO @Char (i8tochar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 (λChar purei8 (chartoi8 0)) (i8tochar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (chartoi8 (i8tochar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 ((λChar 0 @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)) (i8tochar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)))))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 ((i8tochar 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (((λi8 i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1))) 0 @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0))) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 c_putchar (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 (λChar call"void putchar(i8)" (chartoi8 0)) (i8tochar 0)) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 call"void putchar(i8)" (chartoi8 (i8tochar 0))) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() (λi8 call"void putchar(i8)" 0) : IO ()
+--   = bindi8 (bindi8 call"i8 getchar()" @Char (λi8 purei8 (i8toi1s 0 @Char (λi1 λi1 λi1 λi1 λi1 λi1 λi1 λi1 Λ λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> 0) 0 (i1tobit 8) (i1tobit 7) (i1tobit 6) (i1tobit 5) (i1tobit 4) (i1tobit 3) (i1tobit 2) (i1tobit 1)) @Char (λBit λBit λBit λBit λBit λBit λBit λBit λ(Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Bit -> Char) 0 8 7 6 5 4 3 2 (Λ λ0 λ0 0)) @i8 (λBit λBit λBit λBit λBit λBit λBit λBit <7 @i1 #1 #0, 6 @i1 #1 #0, 5 @i1 #1 #0, 4 @i1 #1 #0, 3 @i1 #1 #0, 2 @i1 #1 #0, 1 @i1 #1 #0, 0 @i1 #1 #0>)))) @() call"void putchar(i8)" : IO ()
+```
+
+Although it may seem like the expression cannot be simplified further, this is only a limitation of the notation used above.
+The compiler can replace the `i8toi1s` primitive with a token to emit code that splits the `i8` into 8 `i1` values and then pass the resulting operands into the function.
+The same can be done with the other internal primitives.
+At that point, the whole expression can be normalised down to an LLVM program.
+This leads to the following LLVM construction.
+
+```llvm
+declare ccc i8 @getchar()
+declare ccc void @putchar(i8)
+
+define ccc void @main() norecurse
+{
+B1:
+    %0 = call ccc i8 @getchar()
+    %1 = call fastcc i8 @lambda0(i8 %0)
+    call ccc void @putchar(i8 %1)
+    ret void
+}
+
+define private fastcc i8 @lambda0(i8 %p1) norecurse
+{
+B2:
+    %v4 = lshr i8 %p1, 7
+    %v5 = lshr i8 %p1, 6
+    %v6 = lshr i8 %p1, 5
+    %v7 = lshr i8 %p1, 4
+    %v8 = lshr i8 %p1, 3
+    %v9 = lshr i8 %p1, 2
+    %v10 = lshr i8 %p1, 1
+    %v11 = lshr i8 %p1, 0
+    %v26 = trunc i8 %v4 to i1
+    %v27 = trunc i8 %v5 to i1
+    %v28 = trunc i8 %v6 to i1
+    %v29 = trunc i8 %v7 to i1
+    %v30 = trunc i8 %v8 to i1
+    %v31 = trunc i8 %v9 to i1
+    %v32 = trunc i8 %v10 to i1
+    %v33 = trunc i8 %v11 to i1
+    %v34 = zext i1 %v26 to i8
+    %v35 = zext i1 %v27 to i8
+    %v36 = zext i1 %v28 to i8
+    %v37 = zext i1 %v29 to i8
+    %v38 = zext i1 %v30 to i8
+    %v39 = zext i1 %v31 to i8
+    %v40 = zext i1 %v32 to i8
+    %v12 = shl i8 %v34, 7
+    %v13 = shl i8 %v35, 6
+    %v14 = shl i8 %v36, 5
+    %v15 = shl i8 %v37, 4
+    %v16 = shl i8 %v38, 3
+    %v17 = shl i8 %v39, 2
+    %v18 = shl i8 %v40, 1
+    %v19 = or i8 %v12, %v13
+    %v20 = or i8 %v19, %v14
+    %v21 = or i8 %v20, %v15
+    %v22 = or i8 %v21, %v16
+    %v23 = or i8 %v22, %v17
+    %v24 = or i8 %v23, %v18
+    %v25 = or i8 %v24, 0
+    ret i8 %v25
+}
+```
+
+Using `opt` from LLVM 9.0.1 with the flags `-S -O3 -verify`, the above code is optimised down to:
+
+```llvm
+; Function Attrs: nofree nounwind
+declare i8 @getchar() local_unnamed_addr #0
+
+declare void @putchar(i8) local_unnamed_addr
+
+; Function Attrs: norecurse
+define void @main() local_unnamed_addr #1 {
+B1:
+  %0 = tail call i8 @getchar()
+  %v24.i = and i8 %0, -2
+  tail call void @putchar(i8 %v24.i)
+  ret void
+}
+
+attributes #0 = { nofree nounwind }
+attributes #1 = { norecurse }
+```
+
+The above LLVM program is correct and behaves exactly as desired!
+`opt` is also able to optimise it maximally.
+
 # Conclusion
 
 Many ideas were explored, however some of them went against the goal of having a minimal language.

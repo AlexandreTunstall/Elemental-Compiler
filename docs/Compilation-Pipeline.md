@@ -18,18 +18,17 @@ Verify that all of the types in the program are legal.
 
 # Optimisation
 
-Optimise the program to improve its runtime performance.
-This can be done through strong normalisation of the program's expressions.
+Optimisation is an entirely optional step since LLVM modules are emitted using normalisation rules, but it could yield better compiler performance.
+It can be done through strong normalisation of the program's expressions.
 
-1. Inline all the references to other expressions into exported bindings and remove all non-exported bindings by substituting the expression of referenced bindings for the reference.
+1. Inline all the references to other expressions inside expressions.
 2. Normalise all bindings by following a simple set of strongly normalising rewrite rules.
-3. Identify and eliminate common sub-expressions (CSEs) in the exported bindings by extracting them into their own bindings.
 
 # LLVM Generation
 
-Generate the appropriate LLVM code for the program.
+Generate the appropriate LLVM code for the program by interpreting the program.
 
-1. Convert all bindings into super combinators by introducing new bindings where necessary.
-2. Generate the appropriate LLVM code for all bindings and foreign symbols.
+1. Replace all wired-in and imported definitions with corresponding internal expressions.
+2. Normalise the new AST into an LLVM module.
 
 Once the LLVM is generated, the compiler may opt to use LLVM tools to compile it into assembly or machine code.

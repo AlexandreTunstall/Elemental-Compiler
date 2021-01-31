@@ -1,0 +1,6 @@
+-- Verify that reserved words can still be used as variable names
+
+IO = Λ λ0 0
+foreign = IO
+import = IO
+primitive = IO

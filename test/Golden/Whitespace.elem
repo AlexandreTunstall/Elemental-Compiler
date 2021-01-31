@@ -1,0 +1,10 @@
+-- Testing the whitespace processor
+
+-- Hello from a line comment
+foreign primitive pureIO : ∀ 0 → IO 0; foreign export "main" main
+    : IO (∀ 0 → 0) -- This is a type
+
+{-
+    Block comments!
+-}
+main = pureIO @(∀ 0 → 0) (Λ {- E -} λ0 0)
