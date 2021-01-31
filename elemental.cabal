@@ -15,7 +15,7 @@ copyright:           © 2020-2021 Alexandre Tunstall
 -- homepage:
 category:            Compiler, Development, Language
 build-type:          Simple
-tested-with:         GHC == 8.10.2
+tested-with:         GHC == 8.10.3
 extra-source-files:  test/Golden/*.elem, test/Golden/*.ll
 
 common shared
