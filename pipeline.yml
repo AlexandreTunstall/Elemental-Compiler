@@ -1,0 +1,34 @@
+pool:
+  vmImage: ubuntu-20.04
+
+steps:
+- script: |
+    curl -L https://nixos.org/nix/install | sh
+    . ~/.nix-profile/etc/profile.d/nix.sh
+    # Use Cachix so that we don't spend most of our time building GHC
+    nix-env -iA cachix -f https://cachix.org/api/v1/install
+    cachix use iohk
+  displayName: 'Install Nix'
+- script: |
+    . ~/.nix-profile/etc/profile.d/nix.sh
+    nix-build nix/release.nix -A elemental.components.library -o result-build
+    nix-build nix/release.nix -A elemental.components.library.doc -o result-doc
+  displayName: 'Build'
+- script: |
+    . ~/.nix-profile/etc/profile.d/nix.sh
+    ANT_XML_PATH=test-report.xml nix-build nix/release.nix -A elemental.checks.test -o result-test
+  displayName: 'Test'
+- task: PublishTestResults@2
+  displayName: 'Publish Test Results'
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: '**/*.xml'
+    searchFolder: '$(System.DefaultWorkingDirectory)/result-test'
+    buildPlatform: 'Linux'
+    failTaskOnFailedTests: true
+- task: PublishPipelineArtifact@1
+  displayName: 'Publish Documentation'
+  inputs:
+    targetPath: 'result-build/doc'
+    artifact: 'Documentation'
+    publishLocation: 'pipeline'
