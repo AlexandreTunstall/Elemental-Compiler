@@ -8,7 +8,7 @@ steps:
   displayName: 'Install Nix'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
-    nix-build nix/release.nix -A elemental.components.library -o result-build --option extra-binary-caches https://hydra.iohk.io
+    nix-build nix/release.nix -A elemental.components.library -o result-build --option extra-substituters https://hydra.iohk.io --option trusted-public-keys 'cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ='
     nix-build nix/release.nix -A elemental.components.library.doc -o result-doc
   displayName: 'Build'
 - script: |
