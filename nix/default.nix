@@ -9,6 +9,7 @@
 , haskellNix ? pins.haskellNix
 , pkgs ? pins.pkgs
 , enableProfiling ? false
+, extraModules ? []
 }: {
   inherit pkgs;
   project = pkgs.haskell-nix.project {
@@ -28,6 +29,6 @@
         enableExecutableProfiling = enableProfiling;
         enableLibraryProfiling = enableProfiling;
       }
-    ];
+    ] ++ extraModules;
   };
 }

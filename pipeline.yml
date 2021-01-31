@@ -13,7 +13,7 @@ steps:
   displayName: 'Build'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
-    ANT_XML_PATH=test-report.xml nix-build nix/release.nix -A elemental.checks.test -o result-test
+    nix-build nix/release.nix -A elemental.checks.test -o result-test
   displayName: 'Test'
 - task: PublishTestResults@2
   displayName: 'Publish Test Results'
