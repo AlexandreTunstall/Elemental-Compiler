@@ -7,7 +7,7 @@ steps:
     . ~/.nix-profile/etc/profile.d/nix.sh
     # Use Cachix so that we don't spend most of our time building GHC
     nix-env -iA cachix -f https://cachix.org/api/v1/install
-    cachix use iohk
+    cachix use nix-tools
   displayName: 'Install Nix'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
