@@ -1,7 +1,6 @@
 module Main where
 
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
-import System.Environment
 import Test.Tasty
     ( TestTree
     , Timeout
@@ -30,4 +29,5 @@ tests = do
         ]
   where
     timeout :: Timeout
-    timeout = mkTimeout 1000000  -- 1s
+    -- timeout = mkTimeout 1000000  -- 1s
+    timeout = mkTimeout 100000000  -- 100s
