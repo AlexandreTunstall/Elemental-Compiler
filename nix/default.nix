@@ -9,12 +9,11 @@
 , haskellNix ? pins.haskellNix
 , pkgs ? pins.pkgs
 , enableProfiling ? false
+, extraModules ? []
 }: {
   inherit pkgs;
   project = pkgs.haskell-nix.project {
-    # Although GHC 8.10.3 has been released and is available in nixpkgs master, haskell.nix doesn't yet support it.
-    # See https://github.com/input-output-hk/haskell.nix/pull/980
-    compiler-nix-name = "ghc8102";
+    compiler-nix-name = "ghc8103";
 
     # 'cleanGit' cleans a source directory based on the files known by git
     src = pkgs.haskell-nix.haskellLib.cleanGit {
@@ -30,6 +29,6 @@
         enableExecutableProfiling = enableProfiling;
         enableLibraryProfiling = enableProfiling;
       }
-    ];
+    ] ++ extraModules;
   };
 }
