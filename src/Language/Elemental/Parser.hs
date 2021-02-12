@@ -26,7 +26,7 @@ module Language.Elemental.Parser
     ) where
 
 import Control.Algebra (type (:+:))
-import Control.Applicative (Alternative, liftA2, (<**>))
+import Control.Applicative (Alternative, (<**>))
 import Control.Arrow (Arrow(first, second))
 import Control.Carrier.Lift (Algebra, Lift, LiftC(..), runM, sendM)
 import Control.Carrier.State.Lazy
@@ -155,9 +155,19 @@ lineFold p = do
 chainl1 :: Parser a -> Parser b -> Parser (SrcSpan -> a -> b -> a) -> Parser a
 chainl1 p1 p2 op = scan
   where
-    scan = withSrcSpan $ p1 <**> rst
-    rst = try ((\f ((y, g), l) x -> g $ f l x y)
-        <$> op <*> withSrcSpan ((,) <$> liftA2 (,) p2 rst)) <|> pure const
+    {-
+        "x+y+z" is parsed as "x+(y+z)" and then reassociated to "(x+y)+z".
+
+        For accurate source spans, we parse "[x]+[y]+[z]", where square brackets
+        indicate that we generate the source span for the bracketed expression.
+        We then work out the correct source spans: "[[x+y]+z]".
+    -}
+    scan = withSrcSpan ((,) <$> p1) <**> rst
+    rst = try ((\f (y, l) g (x, l') -> g (f (merge l' l) x y, merge l' l))
+        <$> op <*> withSrcSpan ((,) <$> p2) <*> rst) <|> pure fst
+    
+    merge :: SrcSpan -> SrcSpan -> SrcSpan
+    merge (SrcSpan begin _) (SrcSpan _ end) = SrcSpan begin end
 
 -- | Parses a program, i.e. a list of declarations.
 pProgram :: Parser (SrcSpan, [Decl SrcSpan])

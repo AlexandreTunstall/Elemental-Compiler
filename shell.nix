@@ -23,6 +23,8 @@ in
     buildInputs = with hsPkgs.pkgs; [
       # LLVM CLI tools for local testing purposes
       llvm-config
+      # For viewing heap profiles
+      ghostscript
     ];
 
     # Fail if a needed package isn't installed by Nix
