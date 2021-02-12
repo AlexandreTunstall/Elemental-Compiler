@@ -20,6 +20,15 @@ genSubexpr ea = case ea of
     TypeLam _ ex -> Gen.choice [genSubexpr ex, pure ea]
     InternalExpr {} -> pure ea
 
+genSubtype :: MonadGen m => Type a -> m (Type a)
+genSubtype ta = case ta of
+    Arrow _ tx ty -> Gen.choice [genSubtype tx, genSubtype ty, pure ta]
+    Forall _ tx -> Gen.choice [genSubtype tx, pure ta]
+    TypeVar {} -> pure ta
+    SpecialType _ stx -> case stx of
+        IOType _ tx -> Gen.choice [genSubtype tx, pure ta]
+        InternalType {} -> pure ta
+
 genDecl :: MonadGen m => Int -> m (Decl ())
 genDecl n = Gen.choice
     [ Binding () <$> genDeclName <*> genExpr 0 0 n

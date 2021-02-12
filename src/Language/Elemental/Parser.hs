@@ -15,6 +15,7 @@ module Language.Elemental.Parser
     , mkParser
     , pProgram
     , pDecl
+    , pDeclName
     , pExpr0
     , pExpr1
     , pExpr2
@@ -22,6 +23,8 @@ module Language.Elemental.Parser
     , pType1
     , pType2
     , pSpecialType
+    , pName
+    , pForeignName
     , isIdentifierChar
     ) where
 
