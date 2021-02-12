@@ -13,6 +13,7 @@ import Test.Tasty
 import Test.Tasty.Runners.AntXML (antXMLRunner)
 
 import Golden
+import Pretty
 
 
 main :: IO ()
@@ -26,8 +27,9 @@ tests = do
     goldenTests' <- goldenTests
     pure $ localOption timeout $ testGroup "All tests"
         [ goldenTests'
+        , prettyTests
         ]
   where
     timeout :: Timeout
-    -- timeout = mkTimeout 1000000  -- 1s
-    timeout = mkTimeout 100000000  -- 100s
+    timeout = mkTimeout 1000000  -- 1s
+    -- timeout = mkTimeout 100000000  -- 100s

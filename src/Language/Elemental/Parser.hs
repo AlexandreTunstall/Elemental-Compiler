@@ -22,6 +22,7 @@ module Language.Elemental.Parser
     , pType1
     , pType2
     , pSpecialType
+    , isIdentifierChar
     ) where
 
 import Control.Algebra (type (:+:))

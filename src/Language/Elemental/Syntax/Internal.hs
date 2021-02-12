@@ -25,7 +25,7 @@ import Language.Elemental.Rewrite
 
 -- | A program in the AST.
 data Program a = Program a [Decl a]
-    deriving stock (Show, Functor)
+    deriving stock (Eq, Show, Functor)
 
 -- | A declaration in the AST.
 data Decl a
@@ -37,11 +37,11 @@ data Decl a
     | ForeignExport a ShortText (Expr a) (Type a)
     -- | A foreign primitive: @foreign primitive primName : ...@
     | ForeignPrimitive a (DeclName a) (Type a)
-    deriving stock (Show, Functor)
+    deriving stock (Eq, Show, Functor)
 
 -- | A name in a declaration in the AST.
 data DeclName a = DeclName a Name
-    deriving stock (Show, Functor)
+    deriving stock (Eq, Show, Functor)
 
 -- | An expression in the AST.
 data Expr a
@@ -59,7 +59,7 @@ data Expr a
     | TypeLam a (Expr a)
     -- | Internal expression used for emitting LLVM.
     | InternalExpr a (InternalExpr a)
-    deriving stock (Show, Functor)
+    deriving stock (Eq, Show, Functor)
 
 -- | A type in the AST.
 data Type a
@@ -146,9 +146,26 @@ data InternalExpr a
         => m (Expr a))
 
 {-
-    Functor can't be automatically derived because of the @Rewriter (Expr a)@ in
-    the 'Emit' constructor.
+    Eq and Functor can't be automatically derived because of the @Rewriter
+    (Expr a)@ in the 'Emit' constructor.
 -}
+
+instance Eq a => Eq (InternalExpr a) where
+    x == y = case (x, y) of
+        (Unit, Unit) -> True
+        (PureIO, PureIO) -> True
+        (BindIO, BindIO) -> True
+        (PurePrim sx, PurePrim sy) -> sx == sy
+        (BindPrim sx, BindPrim sy) -> sx == sy
+        (BitVector esx, BitVector esy) -> esx == esy
+        (Call opx acx tx, Call opy acy ty)
+            -> opx == opy && acx == acy && tx == ty
+        (IsolateBit bx sx, IsolateBit by sy) -> bx == by && sx == sy
+        (TestBit, TestBit) -> True
+        (LlvmOperand opx, LlvmOperand opy) -> opx == opy
+        -- We assume all Emits are different
+        _ -> False
+
 instance Functor InternalExpr where
     fmap f ie = case ie of
         Unit -> Unit
