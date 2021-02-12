@@ -91,6 +91,7 @@ test-suite test
   other-modules:
       Gen
     , Golden
+    , Location
     , Pretty
   build-depends:
       elemental

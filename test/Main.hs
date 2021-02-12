@@ -13,6 +13,7 @@ import Test.Tasty
 import Test.Tasty.Runners.AntXML (antXMLRunner)
 
 import Golden
+import Location
 import Pretty
 
 
@@ -25,8 +26,9 @@ main = do
 tests :: IO TestTree
 tests = do
     goldenTests' <- goldenTests
-    pure $ localOption timeout $ testGroup "All tests"
+    pure $ localOption timeout $ testGroup "All"
         [ goldenTests'
+        , locationTests
         , prettyTests
         ]
   where

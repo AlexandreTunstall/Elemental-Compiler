@@ -10,6 +10,25 @@ import Hedgehog.Range qualified as Range
 import Language.Elemental
 
 
+genSubexpr :: MonadGen m => Expr a -> m (Expr a)
+genSubexpr ea = case ea of
+    Ref {} -> pure ea
+    Var {} -> pure ea
+    App _ ef ex -> Gen.choice [genSubexpr ef, genSubexpr ex, pure ea]
+    TypeApp _ ef _ -> Gen.choice [genSubexpr ef, pure ea]
+    Lam _ _ ey -> Gen.choice [genSubexpr ey, pure ea]
+    TypeLam _ ex -> Gen.choice [genSubexpr ex, pure ea]
+    InternalExpr {} -> pure ea
+
+genSubtype :: MonadGen m => Type a -> m (Type a)
+genSubtype ta = case ta of
+    Arrow _ tx ty -> Gen.choice [genSubtype tx, genSubtype ty, pure ta]
+    Forall _ tx -> Gen.choice [genSubtype tx, pure ta]
+    TypeVar {} -> pure ta
+    SpecialType _ stx -> case stx of
+        IOType _ tx -> Gen.choice [genSubtype tx, pure ta]
+        InternalType {} -> pure ta
+
 genDecl :: MonadGen m => Int -> m (Decl ())
 genDecl n = Gen.choice
     [ Binding () <$> genDeclName <*> genExpr 0 0 n
