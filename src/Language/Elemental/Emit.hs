@@ -42,6 +42,7 @@ emitProgram p = runModuleBuilder (const . pure) emptyModuleBuilder
   where
     getDecls :: Program a -> [Decl a]
     getDecls (Program _ decls) = decls
+{-# INLINABLE emitProgram #-}
 
 -- | Emits an Elemental declaration.
 emitDecl

@@ -62,10 +62,12 @@ normaliseProgram (Program l decls) = runState (const pure) defaults
 
     lift :: m r -> StateC s m r
     lift m = StateC $ \k s -> m >>= k s
+{-# INLINABLE normaliseProgram #-}
 
 -- | Normalises an expression.
 normaliseExpr :: Has (Rewriter (Expr a)) sig m => Expr a -> m (Expr a)
 normaliseExpr = beginRewrite $ rewriteExpr $ const empty
+{-# INLINABLE normaliseExpr #-}
 
 -- | Attempts to perform a single rewrite step.
 rewriteExpr
@@ -116,6 +118,7 @@ rewriteExpr rewriteExtra = rewrite
         (_ :\ ex) :$ ey -> pure $ substituteExpr 0 ey ex
         TypeLam _ ex :@ t -> pure $ substituteTypeInExpr 0 t ex
         _ -> empty
+{-# INLINABLE rewriteExpr #-}
 
 {-|
     Inlines references following the given mapping. If a referenced name cannot

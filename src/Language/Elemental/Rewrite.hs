@@ -59,6 +59,7 @@ beginRewrite f x = send $ LocalRewrite x $ rewriteLoop runMaybe f x
   where
     runMaybe :: Applicative m => NonDetC m a -> m (Maybe a)
     runMaybe = fmap getAlt . runNonDetM pure
+{-# INLINABLE beginRewrite #-}
 
 -- | Carrier for the 'Rewriter' effect.
 newtype RewriterC a m b = RewriterC (forall r. (b -> m r)
@@ -69,15 +70,19 @@ newtype RewriterC a m b = RewriterC (forall r. (b -> m r)
 
 instance Functor (RewriterC a m) where
     fmap f (RewriterC m) = RewriterC $ \k -> m (k . f)
+    {-# INLINE fmap #-}
 
 instance Applicative (RewriterC a m) where
     pure x = RewriterC $ \k _ _ -> k x
+    {-# INLINE pure #-}
 
     RewriterC f <*> RewriterC x = RewriterC
         $ \k t l -> f (\g -> x (k . g) t l) t l
+    {-# INLINE (<*>) #-}
 
 instance Monad (RewriterC a m) where
     RewriterC m >>= f = RewriterC $ \k t l -> m (runRewriter k t l . f) t l
+    {-# INLINE (>>=) #-}
 
 instance Algebra sig m => Algebra (Rewriter a :+: sig) (RewriterC a m) where
     alg hdl sig ctx = RewriterC $ \k t l -> case sig of
@@ -85,6 +90,7 @@ instance Algebra sig m => Algebra (Rewriter a :+: sig) (RewriterC a m) where
         L (LocalRewrite x m) -> l x . runRewriter pure t l . hdl >=> k
             $ m <$ ctx
         R other -> alg (runRewriter pure t l . hdl) other ctx >>= k
+    {-# INLINE alg #-}
 
 -- | Runs a rewriter.
 runRewriter
@@ -96,6 +102,7 @@ runRewriter
     -- ^ New rewrite callback.
     -> RewriterC a m b -> m r
 runRewriter cont track local (RewriterC m) = m cont track local
+{-# INLINABLE runRewriter #-}
 
 {-|
     Applies rewrite rules repeatedly until they fail.
@@ -119,3 +126,4 @@ rewriteAny f xs = foldr (<|>) empty
   where
     rebuild :: Functor f => [a] -> f a -> [a] -> f [a]
     rebuild bs x es = (bs <>) . (: es) <$> x
+{-# INLINABLE rewriteAny #-}
