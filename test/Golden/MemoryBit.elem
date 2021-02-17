@@ -1,0 +1,16 @@
+foreign address r_bit 0x2000 : ReadPointer (∀ 0 → 0 → 0)
+foreign address w_bit 0x2000 : WritePointer (∀ 0 → 0 → 0)
+
+foreign primitive pureIO : ∀ 0 → IO 0
+foreign primitive bindIO : ∀ IO 0 → ∀ (1 → IO 0) → IO 0
+foreign primitive loadPointer : ∀ ReadPointer 0 → IO 0
+foreign primitive storePointer : ∀ WritePointer 0 → 0 → IO (∀ 0 → 0)
+
+foreign export "main" main : IO (∀ 0 → 0)
+
+main = bindIO @(∀ 0 → 0 → 0)
+    (loadPointer @(∀ 0 → 0 → 0) r_bit)
+    @(∀ 0 → 0)
+    (λ(∀ 0 → 0 → 0) storePointer @(∀ 0 → 0 → 0) w_bit (not 0))
+
+not = λ(∀ 0 → 0 → 0) Λ λ0 λ0 2 @0 0 1

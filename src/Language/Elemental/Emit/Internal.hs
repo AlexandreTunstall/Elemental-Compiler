@@ -11,6 +11,7 @@ import Control.Arrow (Arrow(first))
 import Control.Effect.Empty (empty)
 import Data.Word (Word32)
 import LLVM.AST qualified as LLVM
+import LLVM.AST.Type qualified as LLVM.Type
 
 import Language.Elemental.Syntax.Internal hiding ((:$), (:@), (:\), (:->))
 
@@ -28,6 +29,13 @@ maybeSplitArrow :: Type a -> Maybe ([Type a], Type a)
 maybeSplitArrow ta = case ta of
     Arrow _ tx ty -> first (tx :) <$> maybeSplitArrow ty
     SpecialType _ (IOType _ tx) -> pure ([], tx)
+    _ -> empty
+
+-- | Converts an Elemental pointer type to an LLVM type.
+toMaybePointerType :: Type a -> Maybe LLVM.Type
+toMaybePointerType t = case t of
+    SpecialType _ (PointerType _ _ tx)
+        -> LLVM.Type.ptr <$> toMaybeArgumentType tx
     _ -> empty
 
 -- | Converts an Elemental type to an LLVM type.

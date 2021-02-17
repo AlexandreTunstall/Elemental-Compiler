@@ -37,6 +37,8 @@ data Decl a
     | ForeignExport a ShortText (Expr a) (Type a)
     -- | A foreign primitive: @foreign primitive primName : ...@
     | ForeignPrimitive a (DeclName a) (Type a)
+    -- | A foreign address: @foreign address vga_buffer 0xB8000 : ...@
+    | ForeignAddress a (DeclName a) Integer (Type a)
     deriving stock (Eq, Show, Functor)
 
 -- | A name in a declaration in the AST.
@@ -77,9 +79,15 @@ data Type a
 data SpecialType a
     -- | An IO type. This enables side effects with referential transparency.
     = IOType a (Type a)
+    -- | A pointer type. This enables interacting directly with memory.
+    | PointerType a PointerKind (Type a)
     -- | An internal type used for emitting LLVM.
     | InternalType a (InternalType a)
     deriving stock (Eq, Show, Functor)
+
+-- | The kind of a pointer, indicating which operations are legal on it.
+data PointerKind = ReadPointer | WritePointer
+    deriving stock (Eq, Show)
 
 -- | Symbol name in the AST.
 newtype Name = Name { unName :: ShortText }
@@ -136,6 +144,12 @@ data InternalExpr a
     | IsolateBit Word32 Word32
     -- | @testBit : i1 -> ∀ 0 -> 0 -> 0@
     | TestBit
+    -- | @loadPointer : ∀ ReadPointer 0 -> IO 0@
+    | LoadPointer
+    -- | @storePointer : ∀ WritePointer 0 -> 0 -> IO (∀ 0 -> 0)@
+    | StorePointer
+    -- | 'StorePointer' except that the stored value is accepted as a primitive.
+    | StorePrim LLVM.Type
     {-|
         An LLVM operand. Usually of an IO type, an 'InternalType' type, or a
         function type.
@@ -177,6 +191,9 @@ instance Functor InternalExpr where
         Call op argc tret -> Call op argc tret
         IsolateBit bit size -> IsolateBit bit size
         TestBit -> TestBit
+        LoadPointer -> LoadPointer
+        StorePointer -> StorePointer
+        StorePrim t -> StorePrim t
         LlvmOperand op -> LlvmOperand op
         Emit m -> Emit $ mapExprRewriter f m
 
@@ -225,6 +242,7 @@ instance Labelled Decl where
         ForeignImport l _ _ _ -> l
         ForeignExport l _ _ _ -> l
         ForeignPrimitive l _ _ -> l
+        ForeignAddress l _ _ _ -> l
 
 instance Labelled DeclName where
     getLabel dname = case dname of
@@ -250,6 +268,7 @@ instance Labelled Type where
 instance Labelled SpecialType where
     getLabel st = case st of
         IOType l _ -> l
+        PointerType l _ _ -> l
         InternalType l _ -> l
 
 -- | Unidirectional operator synonym for 'App'.
@@ -290,7 +309,10 @@ getReferences ea = case ea of
         BitVector es -> concatMap getReferences es
         Call {} -> []
         IsolateBit {} -> []
-        TestBit -> []
+        TestBit {} -> []
+        LoadPointer {} -> []
+        StorePointer {} -> []
+        StorePrim {} -> []
         LlvmOperand {} -> []
         -- Let's pretend this doesn't contain an expression.
         -- This should be fine as long as frontends and parsers don't misbehave.

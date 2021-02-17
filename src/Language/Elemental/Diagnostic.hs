@@ -67,6 +67,8 @@ data Diagnostic
     | NonIOForeignType (Type SrcSpan)
     -- | The declared foreign type is not a legal marshallable type.
     | UnmarshallableForeignType (Type SrcSpan)
+    -- | The declared foreign address is not a marshallable pointer type.
+    | IllegalForeignAddressType (Type SrcSpan)
     -- | The declared type does not match the type of the expression.
     | TypeMismatch
         (Type SrcSpan)
@@ -119,6 +121,9 @@ instance Pretty Diagnostic where
             <> "Foreign imports and exports must have a marshallable type."
             <> line <> "Only booleans" <+> group (prettyType1 $ BitType ())
             <+> "and tuples of booleans are marshallable."
+        IllegalForeignAddressType t -> "Illegal foreign address type:"
+            <+> group (prettyType0 t) <> "." <> line
+            <> "Foreign addresses must have a marshallable pointer type."
         TypeMismatch expected actual -> "Couldn't match expected type"
             <+> group (prettyType1 expected)
             <+> "with actual type" <+> group (prettyType1 actual) <> "."
