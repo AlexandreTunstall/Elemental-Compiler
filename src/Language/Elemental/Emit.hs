@@ -343,7 +343,6 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
         _ -> empty
       where
         atomic :: Maybe LLVM.Atomicity
-        -- atomic = Just (LLVM.System, LLVM.SequentiallyConsistent)
         atomic = Nothing
 
     liftEmit :: Expr a -> m (Expr a)
