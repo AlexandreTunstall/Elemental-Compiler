@@ -29,4 +29,17 @@ primitives = M.fromList
             . SpecialType () . IOType () $ TypeVar () 0
         , InternalExpr () BindIO
         ))
+    , ("loadPointer",
+        ( Forall () $ Arrow ()
+            (SpecialType () . PointerType () ReadPointer $ TypeVar () 0)
+            (SpecialType () . IOType () $ TypeVar () 0)
+        , InternalExpr () LoadPointer
+        ))
+    , ("storePointer",
+        ( Forall () . Arrow ()
+            (SpecialType () . PointerType () WritePointer $ TypeVar () 0)
+            . Arrow () (TypeVar () 0) . SpecialType () . IOType () . Forall ()
+                $ Arrow () (TypeVar () 0) (TypeVar () 0)
+        , InternalExpr () StorePointer
+        ))
     ]

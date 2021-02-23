@@ -188,10 +188,11 @@ pDecl = lineFold $ try pForeign <|> pBinding
         e <- pExpr0
         pure $ \l -> Binding l dname e
 
-    pForeign = symbol "foreign"
-        >> pForeignImport <|> pForeignExport <|> pForeignPrimitive
+    pForeign = symbol "foreign" >> pForeignImport <|> pForeignExport
+        <|> pForeignPrimitive <|> pForeignAddress
 
-    pForeignImport, pForeignExport, pForeignPrimitive :: Parser (Decl SrcSpan)
+    pForeignImport, pForeignExport, pForeignPrimitive, pForeignAddress
+        :: Parser (Decl SrcSpan)
     pForeignImport = withSrcSpan $ do
         _ <- symbol "import"
         dname <- pDeclName
@@ -214,6 +215,14 @@ pDecl = lineFold $ try pForeign <|> pBinding
         _ <- symbol ":"
         t <- pType0
         pure $ \l -> ForeignPrimitive l dname t
+    
+    pForeignAddress = withSrcSpan $ do
+        _ <- symbol "address"
+        dname <- pDeclName
+        addr <- pIntegral
+        _ <- symbol ":"
+        t <- pType0
+        pure $ \l -> ForeignAddress l dname addr t
 
 -- | Parses a declaration name.
 pDeclName :: Parser (DeclName SrcSpan)
@@ -297,10 +306,20 @@ pType2 = between (symbol "(") (symbol ")") pType0 <|> pTypeVar
 
 -- | Parses a special type.
 pSpecialType :: Parser (SpecialType SrcSpan)
-pSpecialType = pIO
+pSpecialType = pIO <|> pReadPointer <|> pWritePointer
   where
-    pIO :: Parser (SpecialType SrcSpan)
+    pIO, pReadPointer, pWritePointer :: Parser (SpecialType SrcSpan)
     pIO = withSrcSpan $ flip IOType <$> (symbol "IO" *> pType2)
+
+    pReadPointer = withSrcSpan $ do
+        _ <- symbol "ReadPointer"
+        t <- pType2
+        pure $ \l -> PointerType l ReadPointer t
+    
+    pWritePointer = withSrcSpan $ do
+        _ <- symbol "WritePointer"
+        t <- pType2
+        pure $ \l -> PointerType l WritePointer t
 
 -- | Parses a name.
 pName :: Parser Name
@@ -310,6 +329,16 @@ pName = lexeme $ Name . T.fromText <$> takeWhile1P Nothing isIdentifierChar
 pForeignName :: Parser T.ShortText
 pForeignName = lexeme $ T.fromString
     <$> (char '"' *> manyTill Lex.charLiteral (char '"'))
+
+-- | Parses an integral, accounting for the optional base prefix.
+pIntegral :: Integral n => Parser n
+pIntegral = lexeme $ (char '0' >> bin <|> hex <|> oct) <|> dec
+  where
+    bin, oct, dec, hex :: Integral n => Parser n
+    bin = char 'b' >> Lex.binary
+    oct = char 'o' >> Lex.octal
+    dec = Lex.decimal
+    hex = char 'x' >> Lex.hexadecimal
 
 -- | Checks whether a character is legal in an identifier.
 isIdentifierChar :: Char -> Bool

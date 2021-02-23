@@ -52,6 +52,7 @@ normaliseProgram (Program l decls) = runState (const pure) defaults
             normExpr <- lift . normaliseExpr $ inlineRefs scope expr
             pure $ ForeignExport l' foreignName normExpr t
         ForeignPrimitive {} -> pure decl
+        ForeignAddress {} -> pure decl
 
     isForeign :: Decl a -> Bool
     isForeign decl = case decl of
@@ -59,13 +60,16 @@ normaliseProgram (Program l decls) = runState (const pure) defaults
         ForeignImport {} -> True
         ForeignExport {} -> True
         ForeignPrimitive {} -> True
+        ForeignAddress {} -> True
 
     lift :: m r -> StateC s m r
     lift m = StateC $ \k s -> m >>= k s
+{-# INLINABLE normaliseProgram #-}
 
 -- | Normalises an expression.
 normaliseExpr :: Has (Rewriter (Expr a)) sig m => Expr a -> m (Expr a)
 normaliseExpr = beginRewrite $ rewriteExpr $ const empty
+{-# INLINABLE normaliseExpr #-}
 
 -- | Attempts to perform a single rewrite step.
 rewriteExpr
@@ -104,6 +108,9 @@ rewriteExpr rewriteExtra = rewrite
             Call {} -> empty
             IsolateBit {} -> empty
             TestBit -> empty
+            LoadPointer -> empty
+            StorePointer -> empty
+            StorePrim {} -> empty
             LlvmOperand {} -> empty
             {-
                 We can't conditionally rewrite Emit due to the monad, so we
@@ -116,6 +123,7 @@ rewriteExpr rewriteExtra = rewrite
         (_ :\ ex) :$ ey -> pure $ substituteExpr 0 ey ex
         TypeLam _ ex :@ t -> pure $ substituteTypeInExpr 0 t ex
         _ -> empty
+{-# INLINABLE rewriteExpr #-}
 
 {-|
     Inlines references following the given mapping. If a referenced name cannot
@@ -157,6 +165,9 @@ substituteExpr idx ea eb = case eb of
         Call {} -> iex
         IsolateBit {} -> iex
         TestBit -> iex
+        LoadPointer -> iex
+        StorePointer -> iex
+        StorePrim {} -> iex
         LlvmOperand {} -> iex
         Emit mex -> Emit $ substituteExpr idx ea <$> mex
 
@@ -186,6 +197,9 @@ substituteTypeInExpr idx ta eb = case eb of
         Call {} -> iex
         IsolateBit {} -> iex
         TestBit -> iex
+        LoadPointer -> iex
+        StorePointer -> iex
+        StorePrim {} -> iex
         LlvmOperand {} -> iex
         Emit mex -> Emit $ substituteTypeInExpr idx ta <$> mex
 
@@ -204,6 +218,7 @@ substituteType idx ta tb = case tb of
         GT -> TypeVar l (idx' - 1)
     SpecialType l st -> SpecialType l $ case st of
         IOType l' tx -> IOType l' (substituteType idx ta tx)
+        PointerType l' pk tx -> PointerType l' pk (substituteType idx ta tx)
         InternalType {} -> st
 
 {-|
@@ -228,6 +243,9 @@ incrementExpr idx ea = case ea of
         Call {} -> iexpr
         IsolateBit {} -> iexpr
         TestBit -> iexpr
+        LoadPointer -> iexpr
+        StorePointer -> iexpr
+        StorePrim {} -> iexpr
         LlvmOperand {} -> iexpr
         Emit mex -> Emit $ incrementExpr idx <$> mex
 
@@ -255,6 +273,9 @@ incrementTypeInExpr idx ea = case ea of
         Call {} -> iexpr
         IsolateBit {} -> iexpr
         TestBit -> iexpr
+        LoadPointer -> iexpr
+        StorePointer -> iexpr
+        StorePrim {} -> iexpr
         LlvmOperand {} -> iexpr
         Emit mex -> Emit $ incrementTypeInExpr idx <$> mex
 
@@ -269,4 +290,5 @@ incrementType idx ta = case ta of
     TypeVar l idx' -> TypeVar l (if idx' >= idx then idx' + 1 else idx')
     SpecialType l st -> SpecialType l $ case st of
         IOType l' tx -> IOType l' (incrementType idx tx)
+        PointerType l' pk tx -> PointerType l' pk (incrementType idx tx)
         InternalType {} -> st

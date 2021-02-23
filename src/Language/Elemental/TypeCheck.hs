@@ -52,6 +52,9 @@ tcDecl decl = case decl of
     ForeignPrimitive l dname@(DeclName _ name) t -> do
         modify $ M.insert name t
         pure $ ForeignPrimitive (TypeInfo l $ Just t) (noType dname) (noType t)
+    ForeignAddress l dname@(DeclName _ name) a t -> do
+        modify $ M.insert name t
+        pure $ ForeignAddress (TypeInfo l $ Just t) (noType dname) a (noType t)
 
 {-|
     Checks the type correctness of an expression and annotates it with type

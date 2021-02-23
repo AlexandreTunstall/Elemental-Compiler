@@ -14,6 +14,7 @@ module Language.Elemental.Syntax
     , Expr(..)
     , Type(..)
     , SpecialType(..)
+    , PointerKind(..)
     , Name(..)
     , Internal.InternalExpr
     , InternalType
@@ -86,6 +87,7 @@ mkProgram l decls = evalHelper $ do
         ForeignExport _ foreignName expr _
             -> (decl, Left foreignName, Right . snd <$> getReferences expr)
         ForeignPrimitive _ (DeclName _ name) _ -> (decl, Right name, [])
+        ForeignAddress _ (DeclName _ name) _ _ -> (decl, Right name, [])
 
     checkDecl :: Has Diagnosis sig m => Decl SrcSpan -> m ()
     checkDecl decl = checkPrimitive decl >> checkForeignTypes decl
@@ -99,6 +101,7 @@ mkProgram l decls = evalHelper $ do
             Nothing -> raise (SourceSpan l') $ InvalidPrimitive name
             Just (t', _) -> if void t ~=~ t' then pure ()
                 else raise (SourceSpan l') $ PrimitiveTypeMismatch name t' t
+        ForeignAddress {} -> pure ()
 
     checkForeignTypes :: Has Diagnosis sig m => Decl SrcSpan -> m ()
     checkForeignTypes decl = case decl of
@@ -106,6 +109,10 @@ mkProgram l decls = evalHelper $ do
         ForeignImport _ _ _ t -> checkType t
         ForeignExport _ _ _ t-> checkType t
         ForeignPrimitive {} -> pure ()
+        ForeignAddress _ _ _ t -> case toMaybePointerType t of
+            Nothing -> raise (SourceSpan $ getLabel t)
+                $ IllegalForeignAddressType t
+            Just _ -> pure ()
 
     checkType :: Has Diagnosis sig m => Type SrcSpan -> m ()
     checkType t = case maybeSplitArrow t of
@@ -132,6 +139,8 @@ mkProgram l decls = evalHelper $ do
                 -> checkName decl dname >> checkTypeVars 0 t
             ForeignExport _ _ expr t -> checkExpr expr >> checkTypeVars 0 t
             ForeignPrimitive _ dname t
+                -> checkName decl dname >> checkTypeVars 0 t
+            ForeignAddress _ dname _ t
                 -> checkName decl dname >> checkTypeVars 0 t
         CyclicSCC ds -> raise (SourceMultiple $ SourceSpan . getLabel <$> ds)
             $ CyclicDecls ds
@@ -173,6 +182,9 @@ mkProgram l decls = evalHelper $ do
             Call {} -> pure ()
             IsolateBit {} -> pure ()
             TestBit -> pure ()
+            LoadPointer -> pure ()
+            StorePointer -> pure ()
+            StorePrim {} -> pure ()
             LlvmOperand {} -> pure ()
             -- Let's pretend this doesn't contain an expression.
             -- This is fine when frontends and parsers don't misbehave.
@@ -186,4 +198,5 @@ mkProgram l decls = evalHelper $ do
             $ raise (SourceSpan l') $ IllegalFreeTypeVar tidx tidx'
         SpecialType _ st -> case st of
             IOType _ tx -> checkTypeVars tidx tx
+            PointerType _ _ tx -> checkTypeVars tidx tx
             InternalType {} -> pure ()

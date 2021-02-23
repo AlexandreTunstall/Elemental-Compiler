@@ -52,6 +52,7 @@ propDecl = property $ do
         ForeignImport _ dname _ _ -> pure dname
         ForeignExport {} -> empty
         ForeignPrimitive _ dname _ -> pure dname
+        ForeignAddress _ dname _ _ -> pure dname
     
     getExpr :: Alternative f => Decl a -> f (Expr a)
     getExpr decl = case decl of
@@ -59,6 +60,7 @@ propDecl = property $ do
         ForeignImport {} -> empty
         ForeignExport _ _ expr _ -> pure expr
         ForeignPrimitive {} -> empty
+        ForeignAddress {} -> empty
     
     getType :: Alternative f => Decl a -> f (Type a)
     getType decl = case decl of
@@ -66,6 +68,7 @@ propDecl = property $ do
         ForeignImport _ _ _ t -> pure t
         ForeignExport _ _ _ t -> pure t
         ForeignPrimitive _ _ t -> pure t
+        ForeignAddress _ _ _ t -> pure t
 
 propSubexpression :: Property
 propSubexpression = property $ do

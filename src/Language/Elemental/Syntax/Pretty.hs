@@ -12,6 +12,7 @@
 -}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
+{-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Prettyprinting for the Elemental AST.
@@ -28,6 +29,8 @@ module Language.Elemental.Syntax.Pretty
     ) where
 
 import Data.Text.Short (ShortText, toText)
+import LLVM.AST qualified as LLVM
+import Numeric (showHex)
 import Prettyprinter
     ( Doc
     , Pretty(pretty)
@@ -61,6 +64,7 @@ instance Pretty (Decl a) where
         ForeignImport _ _ _ t -> ":" <+> prettyType0 t
         ForeignExport _ _ expr t -> prettyExpr2 expr <+> ":" <+> prettyType0 t
         ForeignPrimitive _ _ t -> ":" <+> prettyType0 t
+        ForeignAddress _ _ _ t -> ":" <+> prettyType0 t
 
 {-|
     Prettyprints a declaration, omitting any expressions and types included in
@@ -74,6 +78,8 @@ prettyDeclHead decl = case decl of
     ForeignExport _ foreignName _ _ -> "foreign export"
         <+> dquotes (prettyShortText foreignName)
     ForeignPrimitive _ dname _ -> "foreign primitive" <+> pretty dname
+    ForeignAddress _ dname addr _ -> "foreign address" <+> pretty dname
+        <+> "0x" <> pretty (showHex addr "")
 
 instance Pretty (DeclName a) where
     pretty dname = case dname of
@@ -151,6 +157,10 @@ instance Pretty (SpecialType a) where
 prettySpecialType0 :: SpecialType a -> Doc ann
 prettySpecialType0 sta = case sta of
     IOType _ tx -> "IO" <+> prettyType1 tx
+    PointerType _ pk tx -> (case pk of
+        ReadPointer -> "ReadPointer"
+        WritePointer -> "WritePointer"
+        ) <+> prettyType1 tx
     InternalType {} -> prettySpecialType1 sta
 
 {-|
@@ -160,6 +170,7 @@ prettySpecialType0 sta = case sta of
 prettySpecialType1 :: SpecialType a -> Doc ann
 prettySpecialType1 sta = case sta of
     IOType {} -> pretty sta
+    PointerType {} -> pretty sta
     InternalType _ itx -> pretty itx
 
 instance Pretty Name where
@@ -173,9 +184,12 @@ instance Pretty (InternalExpr a) where
         PurePrim size -> "#purei" <> pretty size
         BindPrim size -> "#bindi" <> pretty size
         BitVector es -> prettyList' '<' '>' $ prettyExpr0 <$> es
-        Call _ argc tret -> "#call" <> pretty argc <> pretty (show tret)
+        Call _ argc tret -> "#call" <> pretty argc <> prettyLlvmType tret
         IsolateBit bit size -> "#isolate" <> pretty bit <> "i" <> pretty size
         TestBit -> "#testBit"
+        LoadPointer -> "#loadPointer"
+        StorePointer -> "#storePointer"
+        StorePrim t -> "#store" <> prettyLlvmType t
         LlvmOperand _ -> "{op}"
         Emit m -> braces $ "LLVM"
             <+> prettyExpr0 (run . voidRewr . fmap snd
@@ -183,6 +197,12 @@ instance Pretty (InternalExpr a) where
       where
         voidRewr :: Applicative m => RewriterC (Expr a) m (Expr a) -> m (Expr a)
         voidRewr = runRewriter pure (const $ pure ()) (const id)
+
+        prettyLlvmType :: LLVM.Type -> Doc ann
+        prettyLlvmType t = case t of
+            LLVM.VoidType -> "void"
+            LLVM.IntegerType size -> "i" <> pretty size
+            _ -> "<unknown>"
 
 instance Pretty (InternalType a) where
     pretty ita = case ita of

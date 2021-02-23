@@ -27,6 +27,7 @@ genSubtype ta = case ta of
     TypeVar {} -> pure ta
     SpecialType _ stx -> case stx of
         IOType _ tx -> Gen.choice [genSubtype tx, pure ta]
+        PointerType _ _ tx -> Gen.choice [genSubtype tx, pure ta]
         InternalType {} -> pure ta
 
 genDecl :: MonadGen m => Int -> m (Decl ())
@@ -35,7 +36,11 @@ genDecl n = Gen.choice
     , ForeignImport () <$> genDeclName <*> genForeignName <*> genType 0 n
     , ForeignExport () <$> genForeignName <*> genExpr 0 0 n <*> genType 0 n
     , ForeignPrimitive () <$> genDeclName <*> genType 0 n
+    , ForeignAddress () <$> genDeclName <*> genAddr <*> genType 0 n
     ]
+  where
+    genAddr :: MonadGen m => m Integer
+    genAddr = Gen.integral $ Range.constant 0 0xFFFFFFFF
 
 genDeclName :: MonadGen m => m (DeclName ())
 genDeclName = DeclName () <$> genName
@@ -61,6 +66,7 @@ genType tidx n = case n of
     _ -> Gen.choice $ withVar
         [ SpecialType () <$> Gen.choice
             [ IOType () <$> genType tidx (n - 1)
+            , PointerType () <$> genPtrKind <*> genType tidx (n - 1)
             ]
         , Arrow () <$> genType tidx (n - 1) <*> genType tidx (n - 1)
         , Forall () <$> genType (tidx + 1) (n - 1)
@@ -70,6 +76,9 @@ genType tidx n = case n of
     withVar = case tidx of
         0 -> id
         _ -> (:) $ TypeVar () <$> Gen.integral (Range.constant 0 $ tidx - 1)
+    
+    genPtrKind :: MonadGen m => m PointerKind
+    genPtrKind = Gen.element [ReadPointer, WritePointer]
 
 -- Do these generate surrogate pairs?
 

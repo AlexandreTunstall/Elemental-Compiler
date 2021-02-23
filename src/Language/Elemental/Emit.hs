@@ -23,7 +23,7 @@ import Data.Word (Word32)
 import LLVM.AST (Definition, Operand, Terminator(Br, CondBr, Ret))
 import LLVM.AST qualified as LLVM
 import LLVM.AST.CallingConvention qualified as LLVM.CallConv
-import LLVM.AST.Constant qualified as LLVM.Constant (Constant(Int))
+import LLVM.AST.Constant qualified as LLVM.Constant
 
 import Control.Carrier.ModuleBuilder
 import Control.Effect.IRBuilder
@@ -42,6 +42,7 @@ emitProgram p = runModuleBuilder (const . pure) emptyModuleBuilder
   where
     getDecls :: Program a -> [Decl a]
     getDecls (Program _ decls) = decls
+{-# INLINABLE emitProgram #-}
 
 -- | Emits an Elemental declaration.
 emitDecl
@@ -56,6 +57,7 @@ emitDecl = \case
         void . function (LLVM.Name $ toShortByteString foreignName) argTys retTy
             $ applyArgs l expr targs . reverse >=> emitExpr
     ForeignPrimitive {} -> error "emitDecl: unexpected foreign primitive"
+    ForeignAddress {} -> error "emitDecl: unexpected foreign address"
   where
     applyArgs
         :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m)
@@ -105,6 +107,19 @@ inlinePrimitives (Program l decls) = Program l <$> traverse go decls
         ForeignExport {} -> pure decl
         ForeignPrimitive l' dname@(DeclName _ name) _ -> pure . Binding l' dname
             . (<$) l' . snd $ primitives M.! name
+        ForeignAddress l' dname addr t -> pure . Binding l' dname
+            . InternalExpr l' . LlvmOperand . LLVM.ConstantOperand
+            {-
+                With GHC 9, it would be sounder to work out the needed bit size
+                using the base 2 logarithm. Although it can be done with older
+                GHC versions, differences between the two integer libraries make
+                it necessary to test on both libraries.
+
+                Until GHC 9, 128 bits should work for most architectures. Using
+                a smaller size than the architecture may truncate the address.
+            -}
+            . LLVM.Constant.IntToPtr (LLVM.Constant.Int 128 addr)
+            $ toPointerType t
 
     genMarshall :: a -> Int -> Type a -> Expr a
     genMarshall l' idx t = App l' (marshallOut l' t) (Var l' idx)
@@ -168,6 +183,10 @@ pattern FA ty = Forall () ty
 pattern IOT :: Type () -> Type ()
 pattern IOT tx = SpecialType () (IOType () tx)
 
+-- | 'PointerType' synonym
+pattern PtrT :: PointerKind -> Type () -> Type ()
+pattern PtrT pk tx = SpecialType () (PointerType () pk tx)
+
 -- | v'InternalExpr' synonym
 pattern IE :: InternalExpr () -> Expr ()
 pattern IE ie = InternalExpr () ie
@@ -188,7 +207,7 @@ rewriteLlvm
     -> Expr a -> m (Expr a)
 rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
     <|> llvmBits ea <|> withLabel llvmBitVector ea
-    <|> withLabel (llvmCall []) ea <|> liftEmit ea
+    <|> withLabel (llvmCall []) ea <|> llvmPointer ea <|> liftEmit ea
   where
     withLabel :: (Functor f, Labelled f) => (f () -> m (f ())) -> f a -> m (f a)
     withLabel f ex = fmap (getLabel ex <$) . f $ () <$ ex
@@ -306,6 +325,25 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
         callInstr :: Operand -> [LLVM.Operand] -> LLVM.Instruction
         callInstr fop argOps = LLVM.Call Nothing LLVM.CallConv.C [] (Right fop)
             ((, []) <$> argOps) [] []
+    
+    llvmPointer :: Expr a -> m (Expr a)
+    llvmPointer = withLabel $ \case
+        IE LoadPointer :@ t :$ IE (LlvmOperand op)
+            -> pure . IE $ Emit $ IE . LlvmOperand <$> emitInstr (toPointerType t)
+                (LLVM.Load True op atomic 1 [])
+        IE StorePointer :@ t -> case toMaybeInternalType t of
+            Just it -> pure $ PtrT WritePointer t :\ t
+                :\ IE (StorePrim $ internalTypeToLlvm it)
+                :$ V 1 :$ (marshallOut () t :$ V 0)
+            Nothing -> empty
+        IE (StorePrim _) :$ IE (LlvmOperand ptr) :$ IE (LlvmOperand op)
+            -> pure . IE $ Emit $ do
+                emitInstrVoid $ LLVM.Store True ptr op atomic 1 []
+                pure $ IE Unit
+        _ -> empty
+      where
+        atomic :: Maybe LLVM.Atomicity
+        atomic = Nothing
 
     liftEmit :: Expr a -> m (Expr a)
     liftEmit = withLabel $ \case
@@ -385,6 +423,17 @@ splitArrow ta = fromMaybe (error $ "splitArrow: expected IO return type, got: "
 -}
 arrowToLlvmType :: Type a -> ([LLVM.Type], LLVM.Type)
 arrowToLlvmType = splitArrow >>> fmap toArgumentType *** toReturnType
+
+{-|
+    Converts an Elemental type to an LLVM type, failing if the type is not a
+    pointer type or if it is unmarshallable.
+-}
+toPointerType :: Type a -> LLVM.Type
+toPointerType t = fromMaybe abort $ toMaybePointerType t
+  where
+    abort :: a
+    abort = error $ "toPointerType: unmarshallable pointer type: "
+        <> show (prettyType0 t)
 
 {-|
     Converts an Elemental type to an LLVM type, failing if the type is @void@ or
