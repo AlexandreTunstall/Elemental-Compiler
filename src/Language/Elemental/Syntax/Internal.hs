@@ -7,8 +7,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
 
-{-# LANGUAGE Strict #-}
-
 -- | All AST definitions.
 module Language.Elemental.Syntax.Internal
     ( module Language.Elemental.Syntax.Internal
