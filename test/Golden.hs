@@ -19,7 +19,8 @@ import LLVM.Module
     (File(File), moduleLLVMAssembly, withModuleFromAST, writeLLVMAssemblyToFile)
 import LLVM.PassManager (runPassManager, withPassManager)
 import LLVM.PassManager qualified as LLVM.Pass
-import Prettyprinter (group, (<+>))
+import Prettyprinter (Doc, PageWidth(Unbounded), defaultLayoutOptions, group, layoutPageWidth, layoutPretty, (<+>))
+import Prettyprinter.Render.String (renderString)
 import System.FilePath (replaceExtension, takeBaseName)
 import System.IO (Handle, IOMode(WriteMode), hPutStrLn, withFile)
 import Test.Tasty (TestTree, testGroup)
@@ -51,8 +52,8 @@ compileFile file = do
             }
     withContext $ \ctx -> withModuleFromAST ctx llvm
         $ \m -> withPassManager passes $ \pm -> do
-            verify m
             writeLLVMAssemblyToFile (File $ replaceExtension file ".ll") m
+            verify m
             _ <- runPassManager pm m
             BSL.fromStrict <$> moduleLLVMAssembly m
   where
@@ -74,19 +75,26 @@ printRewrites h = runReader (-1) . runRewriter pure printRewrite wrapRewrite
         :: (Has (Reader Int) sig m, Has (Lift IO) sig m)
         => Expr TypeInfo -> m ()
     printRewrite expr = putIndented
-        $ "==== into " <> show (group $ prettyExpr0 expr)
+        $ "==== into " <> showDoc (prettyExpr0 expr)
 
     wrapRewrite
         :: (Has (Reader Int) sig m, Has (Lift IO) sig m)
         => Expr TypeInfo -> m a -> m a
     wrapRewrite expr m = local @Int (+1)
-        $ putIndented ("Rewriting " <> show (group $ prettyExpr0 expr)) >> m
+        $ putIndented ("Rewriting " <> showDoc (prettyExpr0 expr)) >> m
 
     putIndented
         :: (Has (Reader Int) sig m, Has (Lift IO) sig m) => String -> m ()
     putIndented str = do
         depth <- ask
         sendIO . hPutStrLn h . foldr (:) str $ replicate (4 * depth) ' '
+    
+    showDoc :: Doc ann -> String
+    showDoc = renderString . layoutPretty layoutOpts . group
+      where
+        layoutOpts = defaultLayoutOptions
+            { layoutPageWidth = Unbounded
+            }
 
 passes :: LLVM.Pass.PassSetSpec
 passes = LLVM.Pass.CuratedPassSetSpec

@@ -81,6 +81,8 @@ executable elemental
       -- but don't be deceived, because "cabal repl" won't work without a build-depends on the library.
       elemental
     , prettyprinter-ansi-terminal ^>= 1.1
+  ghc-options:
+    -threaded
 
 -- Very creatively named
 test-suite test
@@ -101,3 +103,5 @@ test-suite test
     , tasty-ant-xml ^>= 1.1
     , tasty-golden ^>= 2.3
     , tasty-hedgehog ^>= 1.0
+  ghc-options:
+    -threaded

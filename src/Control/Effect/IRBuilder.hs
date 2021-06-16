@@ -17,6 +17,7 @@ module Control.Effect.IRBuilder
     , block
     , emitBlockStart
     , fresh
+    , currentBlock
     -- * Low-level
     , ensureBlock
     , modifyBlock
@@ -95,6 +96,10 @@ modifyBlock f = do
             nm <- freshUnName
             modify $ \s -> s { builderBlock = Just $! f $ emptyPartialBlock nm }
         Just bb -> modify $ \s -> s { builderBlock = Just $! f bb }
+
+-- | Gets the name of the current block, creating a block if there isn't any.
+currentBlock :: Has IRBuilder sig m => m Name
+currentBlock = gets (fmap partialBlockName . builderBlock) >>= maybe block pure
 
 -- | Generates a fresh name.
 fresh :: Has IRBuilder sig m => m Name
