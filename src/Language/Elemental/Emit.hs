@@ -24,6 +24,8 @@ import LLVM.AST (Definition, Operand, Terminator(Br, CondBr, Ret))
 import LLVM.AST qualified as LLVM
 import LLVM.AST.CallingConvention qualified as LLVM.CallConv
 import LLVM.AST.Constant qualified as LLVM.Constant
+import Prettyprinter (Doc, PageWidth(Unbounded), defaultLayoutOptions, group, layoutPageWidth, layoutPretty)
+import Prettyprinter.Render.String (renderString)
 
 import Control.Carrier.ModuleBuilder
 import Control.Effect.IRBuilder
@@ -38,7 +40,8 @@ import Language.Elemental.Syntax.Pretty
 -- | Converts an Elemental program into a list of LLVM definitions.
 emitProgram :: Has (Rewriter (Expr a)) sig m => Program a -> m [Definition]
 emitProgram p = runModuleBuilder (const . pure) emptyModuleBuilder
-    $ inlinePrimitives p >>= normaliseProgram >>= traverse emitDecl . getDecls
+    $ inlinePrimitives p >>= normaliseProgram normaliseLlvmLazy
+    >>= traverse emitDecl . getDecls
   where
     getDecls :: Program a -> [Decl a]
     getDecls (Program _ decls) = decls
@@ -55,7 +58,7 @@ emitDecl = \case
         let (argTys, retTy) = arrowToLlvmType t
             targs = fst $ splitArrow t
         void . function (LLVM.Name $ toShortByteString foreignName) argTys retTy
-            $ applyArgs l expr targs . reverse >=> emitExpr
+            $ applyArgs l expr (reverse targs) . reverse >=> emitExpr
     ForeignPrimitive {} -> error "emitDecl: unexpected foreign primitive"
     ForeignAddress {} -> error "emitDecl: unexpected foreign address"
   where
@@ -85,7 +88,7 @@ emitExprBlock expr = case expr of
     InternalExpr _ (LlvmOperand op) -> pure $ pure op
     InternalExpr _ (Emit m) -> m >>= emitExprBlock
     _ -> error $ "emitExprBlock: illegal expression: "
-        <> show (prettyExpr0 expr)
+        <> showDoc (prettyExpr0 expr)
 
 -- | Converts primitives and foreign imports into the corresponding bindings.
 inlinePrimitives :: Has ModuleBuilder sig m => Program a -> m (Program a)
@@ -102,7 +105,7 @@ inlinePrimitives (Program l decls) = Program l <$> traverse go decls
                 ltargs ltret
             pure $ foldr (Lam l') (foldr (flip $ App l')
                 (InternalExpr l' $ Call func (length ltargs) ltret)
-                $ zipWith (genMarshall l') [0..] targs
+                $ zipWith (genMarshall l') [0..] $ reverse targs
                 ) targs
         ForeignExport {} -> pure decl
         ForeignPrimitive l' dname@(DeclName _ name) _ -> pure . Binding l' dname
@@ -140,6 +143,17 @@ normaliseLlvm = beginRewrite (rewriteExpr $ rewriteLlvm normaliseLlvm)
     joinEmit ex = case ex of
         InternalExpr _ (Emit ey) -> ey >>= normaliseLlvm
         _ -> pure ex
+
+normaliseLlvmLazy :: (Has (Rewriter (Expr a)) sig m) => Expr a -> m (Expr a)
+normaliseLlvmLazy = beginRewrite (rewriteExpr $ rewriteLlvm normaliseLlvm)
+    >=> joinEmitLazy
+  where
+    joinEmitLazy :: Has (Rewriter (Expr a)) sig m => Expr a -> m (Expr a)
+    joinEmitLazy ex = case ex of
+        InternalExpr l (Emit ey) -> pure
+            $ InternalExpr l $ Emit $ ey >>= normaliseLlvm
+        _ -> pure ex
+{-# INLINABLE normaliseLlvmLazy #-}
 
 -- Pattern synonyms so that the rewriter is readable.
 
@@ -277,17 +291,19 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
                 emitBlockStart bt
                 mopt <- mapExprRewriter (const ()) (normExpr et)
                     >>= emitExprBlock
+                bt' <- currentBlock
                 emitTerm $ Br br []
                 emitBlockStart bf
                 mopf <- mapExprRewriter (const ()) (normExpr ef)
                     >>= emitExprBlock
+                bf' <- currentBlock
                 emitTerm $ Br br []
                 emitBlockStart br
                 let lt = internalTypeToLlvm $ toInternalType t
                 case (,) <$> mopt <*> mopf of
                     Nothing -> pure Unit
                     Just (opt, opf) -> fmap LlvmOperand . emitInstr lt
-                        $ LLVM.Phi lt [(opt, bt), (opf, bf)] []
+                        $ LLVM.Phi lt [(opt, bt'), (opf, bf')] []
         _ -> empty
 
     llvmBitVector :: Expr () -> m (Expr ())
@@ -314,7 +330,7 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
 
     llvmCall :: [LLVM.Operand] -> Expr () -> m (Expr ())
     llvmCall ops = \case
-        ex :$ IE (LlvmOperand op) -> llvmCall (ops <> pure op) ex
+        ex :$ IE (LlvmOperand op) -> llvmCall (op : ops) ex
         IE (Call fop argc tret) -> if argc == length ops
             then pure . IE $ Emit $ IE <$> case tret of
                 LLVM.VoidType -> Unit <$ emitInstrVoid (callInstr fop ops)
@@ -373,7 +389,7 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
     toOperand ex = case ex of
         IE (LlvmOperand op) -> op
         _ -> error $ "rewriteLlvm: expected an LLVM operand, got: "
-            <> show (prettyExpr0 ex)
+            <> showDoc (prettyExpr0 ex)
 
 -- | Creates a function that marshalls from an LLVM type to an Elemental type.
 marshallIn :: a -> Type a -> Expr a
@@ -413,7 +429,7 @@ marshallOut l t = case toInternalType t of
 -}
 splitArrow :: Type a -> ([Type a], Type a)
 splitArrow ta = fromMaybe (error $ "splitArrow: expected IO return type, got: "
-    <> show (prettyType0 ta)) $ maybeSplitArrow ta
+    <> showDoc (prettyType0 ta)) $ maybeSplitArrow ta
 
 {-|
     Splits an Elemental arrow type and converts the argument and return types to
@@ -433,7 +449,7 @@ toPointerType t = fromMaybe abort $ toMaybePointerType t
   where
     abort :: a
     abort = error $ "toPointerType: unmarshallable pointer type: "
-        <> show (prettyType0 t)
+        <> showDoc (prettyType0 t)
 
 {-|
     Converts an Elemental type to an LLVM type, failing if the type is @void@ or
@@ -444,7 +460,7 @@ toArgumentType t = fromMaybe abort $ toMaybeArgumentType t
   where
     abort :: a
     abort = error $ "toArgumentType: unmarshallable argument type: "
-        <> show (prettyType0 t)
+        <> showDoc (prettyType0 t)
 
 -- | Converts an Elemental type to an LLVM return type.
 toReturnType :: Type a -> LLVM.Type
@@ -455,9 +471,17 @@ toReturnType t = case toInternalType t of
 -- | Converts a type to an internal type, failing if the conversion is invalid.
 toInternalType :: Type a -> InternalType a
 toInternalType t = fromMaybe (error $ "toInternalType: unmarshallable type: "
-    <> show (prettyType0 t)) $ toMaybeInternalType t
+    <> showDoc (prettyType0 t)) $ toMaybeInternalType t
 
 -- | Converts an internal Elemental type to an LLVM type.
 internalTypeToLlvm :: InternalType a -> LLVM.Type
 internalTypeToLlvm it = case it of
     LlvmInt size -> LLVM.IntegerType size
+
+-- | Renders a Doc without line breaks
+showDoc :: Doc ann -> String
+showDoc = renderString . layoutPretty layoutOpts . group
+    where
+    layoutOpts = defaultLayoutOptions
+        { layoutPageWidth = Unbounded
+        }

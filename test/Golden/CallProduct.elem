@@ -1,0 +1,9 @@
+-- Verifies that foreign calls involving products of values work
+
+foreign export "main" main : IO (∀ 0 → 0)
+
+foreign import c_dothing "dothing" : (∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) → (∀ 0 → 0 → 0) → IO (∀ 0 → 0)
+
+main = c_dothing (Λ λ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) 0 f f) f
+
+f = Λ λ0 λ0 0

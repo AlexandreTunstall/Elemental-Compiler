@@ -1,0 +1,5 @@
+-- Verifies that foreign calls have their arguments in the correct order
+
+foreign export "main" c_dothing : (∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) → (∀ 0 → 0 → 0) → IO (∀ 0 → 0)
+
+foreign import c_dothing "dothing" : (∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) → (∀ 0 → 0 → 0) → IO (∀ 0 → 0)

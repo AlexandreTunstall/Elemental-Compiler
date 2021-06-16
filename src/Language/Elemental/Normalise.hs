@@ -32,8 +32,8 @@ import Language.Elemental.Syntax.Internal
 -- | Replaces all defined references and normalises all expressions.
 normaliseProgram
     :: forall a sig m. Has (Rewriter (Expr a)) sig m
-    => Program a -> m (Program a)
-normaliseProgram (Program l decls) = runState (const pure) defaults
+    => (Expr a -> m (Expr a)) -> Program a -> m (Program a)
+normaliseProgram normExpr (Program l decls) = runState (const pure) defaults
     $ Program l . filter isForeign <$> traverse normaliseDecl decls
   where
     defaults :: M.Map Name (Expr a)
@@ -43,14 +43,14 @@ normaliseProgram (Program l decls) = runState (const pure) defaults
     normaliseDecl decl = case decl of
         Binding l' dname@(DeclName _ name) expr -> do
             scope <- get
-            normExpr <- lift . normaliseExpr $ inlineRefs scope expr
-            modify $ M.insert name normExpr
-            pure $ Binding l' dname normExpr
+            nex <- lift . normExpr $ inlineRefs scope expr
+            modify $ M.insert name nex
+            pure $ Binding l' dname nex
         ForeignImport {} -> pure decl
         ForeignExport l' foreignName expr t -> do
             scope <- get
-            normExpr <- lift . normaliseExpr $ inlineRefs scope expr
-            pure $ ForeignExport l' foreignName normExpr t
+            nex <- lift . normExpr $ inlineRefs scope expr
+            pure $ ForeignExport l' foreignName nex t
         ForeignPrimitive {} -> pure decl
         ForeignAddress {} -> pure decl
 

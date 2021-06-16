@@ -7,6 +7,8 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# LANGUAGE Strict #-}
+
 -- | All AST definitions.
 module Language.Elemental.Syntax.Internal
     ( module Language.Elemental.Syntax.Internal
@@ -209,6 +211,7 @@ mapExprRewriter f = runRewriter (pure . fmap f) (mapTrack f) (mapLocal f)
 
     mapLocal :: Has (Rewriter (Expr b)) sig m => (a -> b) -> Expr a -> m s -> m s
     mapLocal g = localRewrite . fmap g
+{-# INLINE mapExprRewriter #-}
 
 {-|
     Internal types used for emitting LLVM.
