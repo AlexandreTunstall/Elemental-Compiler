@@ -8,6 +8,7 @@ import Control.Carrier.Reader (Reader, ReaderC, ask, local, runReader)
 import Control.Effect.Lift (Has, Lift, run, sendIO)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
+import Data.Fix (foldFix)
 import Data.Functor.Identity (Identity)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -19,7 +20,15 @@ import LLVM.Module
     (File(File), moduleLLVMAssembly, withModuleFromAST, writeLLVMAssemblyToFile)
 import LLVM.PassManager (runPassManager, withPassManager)
 import LLVM.PassManager qualified as LLVM.Pass
-import Prettyprinter (Doc, PageWidth(Unbounded), defaultLayoutOptions, group, layoutPageWidth, layoutPretty, (<+>))
+import Prettyprinter
+    ( Doc
+    , PageWidth(Unbounded)
+    , defaultLayoutOptions
+    , group
+    , layoutPageWidth
+    , layoutPretty
+    , (<+>)
+    )
 import Prettyprinter.Render.String (renderString)
 import System.FilePath (replaceExtension, takeBaseName)
 import System.IO (Handle, IOMode(WriteMode), hPutStrLn, withFile)
@@ -68,18 +77,30 @@ printDiags = run . runDiagnosis pure (printDiag "Error") (printDiag "Warning")
 printDiag :: String -> SourceLocation -> Diagnostic -> r
 printDiag t l d = error $ show $ pretty t <> ":" <+> withSource l (pretty d)
 
-printRewrites :: Handle -> RewriterC (Expr TypeInfo) (ReaderC Int IO) a -> IO a
-printRewrites h = runReader (-1) . runRewriter pure printRewrite wrapRewrite
+printRewrites :: Handle -> BirewriterC ExprF TypeF (ReaderC Int IO) a -> IO a
+printRewrites h = runReader (-1) . runBirewriter pure printRewrite wrapRewrite
   where
     printRewrite
         :: (Has (Reader Int) sig m, Has (Lift IO) sig m)
-        => Expr TypeInfo -> m ()
-    printRewrite expr = putIndented
-        $ "==== into " <> showDoc (prettyExpr0 expr)
+        => Birule ExprF TypeF -> Expr -> m ()
+    printRewrite (pat :=> _) expr = do
+        putIndented $ "====   by " <> showDoc (prettyBiruleIn pat)
+        putIndented $ "==== into " <> showDoc (prettyExpr0 expr)
+      where
+        prettyBiruleIn :: BiruleIn ExprF TypeF x -> Doc ann
+        prettyBiruleIn = ($ 0) . foldFix go
+          where
+            go :: BiruleInF ExprF TypeF x (Int -> Doc ann) -> Int -> Doc ann
+            go (Bimatch x) idx = prettyExprF idx $ imap (foldFix go') x
+            go (Bisome _) _ = "_"
+
+            go' :: RuleInF TypeF x (Int -> Doc ann) -> Int -> Doc ann
+            go' (Match x) idx = prettyTypeF idx x
+            go' (Some _) _ = "_"
 
     wrapRewrite
         :: (Has (Reader Int) sig m, Has (Lift IO) sig m)
-        => Expr TypeInfo -> m a -> m a
+        => Expr -> m a -> m a
     wrapRewrite expr m = local @Int (+1)
         $ putIndented ("Rewriting " <> showDoc (prettyExpr0 expr)) >> m
 

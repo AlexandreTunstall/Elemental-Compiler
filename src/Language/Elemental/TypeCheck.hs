@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -10,17 +11,20 @@ module Language.Elemental.TypeCheck
 
 import Control.Carrier.Reader (Has, Reader, asks, local, runReader)
 import Control.Effect.State (State, gets, modify)
-import Control.Monad (unless, void)
+import Control.Monad (unless)
+import Data.Fix (Fix(Fix), foldFix, unFix)
 import Data.Map qualified as M
-import Prettyprinter (Pretty(pretty))
+import Data.Maybe (isJust)
 
 import Language.Elemental.Diagnostic
 import Language.Elemental.Location
 import Language.Elemental.Normalise
+import Language.Elemental.Rewrite
 import Language.Elemental.Syntax.Internal
+import Language.Elemental.Syntax.Pretty
 
 -- | A source span maybe annotated with type information.
-data TypeInfo = TypeInfo SrcSpan (Maybe (Type SrcSpan))
+data TypeInfo = TypeInfo SrcSpan (Maybe Type)
 
 instance IsLoc TypeInfo where
     getLoc (TypeInfo l _) = getLoc l
@@ -32,29 +36,35 @@ instance IsLoc TypeInfo where
     be found.
 -}
 tcDecl
-    :: (Has Diagnosis sig m, Has (State (M.Map Name (Type SrcSpan))) sig m)
+    :: (Has Diagnosis sig m, Has (State (M.Map Name Type)) sig m)
     => Decl SrcSpan -> m (Decl TypeInfo)
 tcDecl decl = case decl of
     Binding l dname@(DeclName _ name) e -> do
-        e' <- runReader @[Type SrcSpan] [] $ tcExpr e
+        e' <- runReader @[Type] [] $ tcExpr e
         let t = expectType e'
         modify $ M.insert name t
-        pure $ Binding (TypeInfo l $ Just t) (noType dname) e'
-    ForeignImport l dname@(DeclName _ name) foreignName t -> do
+        pure $ Binding (TypeInfo l $ Just t) (lnoType dname) e'
+    ForeignImport l dname@(DeclName _ name) foreignName at -> do
+        let t = stripType at
         modify $ M.insert name t
-        pure . ForeignImport (TypeInfo l $ Just t) (noType dname) foreignName
-            $ noType t
-    ForeignExport l foreignName e t -> do
-        e' <- runReader @[Type SrcSpan] [] $ tcExpr e
+        pure . ForeignImport (TypeInfo l $ Just t) (lnoType dname) foreignName
+            $ noType at
+    ForeignExport l foreignName e at -> do
+        let t = stripType at
+        e' <- runReader @[Type] [] $ tcExpr e
         unless (t ~=~ expectType e')
-            $ raise (getLabel e') $ TypeMismatch t (expectType e')
-        pure $ ForeignExport (TypeInfo l $ Just t) foreignName e' (noType t)
-    ForeignPrimitive l dname@(DeclName _ name) t -> do
+            $ raise (getBiann $ unFix e') $ TypeMismatch t (expectType e')
+        pure $ ForeignExport (TypeInfo l $ Just t) foreignName e' (noType at)
+    ForeignPrimitive l dname@(DeclName _ name) at -> do
+        let t = stripType at
         modify $ M.insert name t
-        pure $ ForeignPrimitive (TypeInfo l $ Just t) (noType dname) (noType t)
-    ForeignAddress l dname@(DeclName _ name) a t -> do
+        pure
+            $ ForeignPrimitive (TypeInfo l $ Just t) (lnoType dname) (noType at)
+    ForeignAddress l dname@(DeclName _ name) a at -> do
+        let t = stripType at
         modify $ M.insert name t
-        pure $ ForeignAddress (TypeInfo l $ Just t) (noType dname) a (noType t)
+        pure
+            $ ForeignAddress (TypeInfo l $ Just t) (lnoType dname) a (noType at)
 
 {-|
     Checks the type correctness of an expression and annotates it with type
@@ -63,41 +73,44 @@ tcDecl decl = case decl of
     be found.
 -}
 tcExpr
-    :: (Has Diagnosis sig m, Has (Reader [Type SrcSpan]) sig m
-        , Has (State (M.Map Name (Type SrcSpan))) sig m)
-    => Expr SrcSpan -> m (Expr TypeInfo)
-tcExpr ea = case ea of
-    Ref l name -> do
+    :: (Has Diagnosis sig m, Has (Reader [Type]) sig m
+        , Has (State (M.Map Name Type)) sig m)
+    => AnnExpr SrcSpan -> m (AnnExpr TypeInfo)
+tcExpr = foldFix $ \(Biann l ea) -> case ea of
+    Ref name -> do
         t <- gets (M.!? name)
-        pure $ Ref (TypeInfo l t) name
-    Var l idx -> do
+        pure . Fix . Biann (TypeInfo l t) $ Ref name
+    Var idx -> do
         t <- asks (!? idx)
-        pure $ Var (TypeInfo l t) idx
-    App l ef ex -> do
-        ef' <- tcExpr ef
-        ex' <- tcExpr ex
+        pure . Fix . Biann (TypeInfo l t) $ Var idx
+    App ef ex -> do
+        ef' <- ef
+        ex' <- ex
         t <- case expectType ef' of
-            Arrow _ tx ty -> if tx ~=~ expectType ex'
+            Fix (Arrow tx ty) -> if tx ~=~ expectType ex'
                 then pure ty
                 else raise l $ TypeMismatch tx (expectType ex')
-            tx -> raise (getLabel ef') $ TypeExpectedArrow (expectType ex') tx
-        pure $ App (TypeInfo l $ Just t) ef' ex'
-    TypeApp l ef tx -> do
-        ef' <- tcExpr ef
+            tx -> raise (getBiann $ unFix ef')
+                $ TypeExpectedArrow (expectType ex') tx
+        pure . Fix . Biann (TypeInfo l $ Just t) $ App ef' ex'
+    TypeApp ef atx -> do
+        let tx = stripType atx
+        ef' <- ef
         t <- case expectType ef' of
-            Forall _ ty -> pure $ substituteType 0 tx ty
-            ty -> raise (getLabel ef') $ TypeExpectedForall ty
-        pure $ TypeApp (TypeInfo l $ Just t) ef' (noType tx)
-    Lam l tx ey -> do
-        ey' <- local (tx :) $ tcExpr ey
-        let t = Arrow l tx $ expectType ey'
-        pure $ Lam (TypeInfo l $ Just t) (noType tx) ey'
-    TypeLam l ex -> do
-        ex' <- local @[Type SrcSpan] (incrementType 0 <$>) $ tcExpr ex
-        let t = Forall l $ expectType ex'
-        pure $ TypeLam (TypeInfo l $ Just t) ex'
-    InternalExpr _ _ -> error
-        $ "tcExpr: unexpected internal expression: " <> show (pretty ea)
+            Fix (Forall ty) -> pure $ substituteType 0 tx ty
+            ty -> raise (getBiann $ unFix ef') $ TypeExpectedForall ty
+        pure . Fix . Biann (TypeInfo l $ Just t) $ TypeApp ef' (noType atx)
+    Lam atx ey -> do
+        let tx = stripType atx
+        ey' <- local (tx :) ey
+        let t = Fix . Arrow tx $ expectType ey'
+        pure . Fix . Biann (TypeInfo l $ Just t) $ Lam (noType atx) ey'
+    TypeLam ex -> do
+        ex' <- local @[Type] (incrementType 0 <$>) ex
+        let t = Fix . Forall $ expectType ex'
+        pure . Fix . Biann (TypeInfo l $ Just t) $ TypeLam ex'
+    InternalExpr _ -> error $ "tcExpr: unexpected internal expression: " <> show
+        (prettyExprF 0 $ const mempty <$ imap (prettyType . stripType) ea)
   where
     -- Why isn't this in the Prelude?
     (!?) :: [a] -> Int -> Maybe a
@@ -107,16 +120,24 @@ tcExpr ea = case ea of
         | n > 0 = xs !? pred n
         | otherwise = error "(!?): negative index"
 
--- | Type equivalence
-(~=~) :: Type a -> Type a -> Bool
-t1 ~=~ t2 = void t1 == void t2
+-- | Type equivalence.
+(~=~) :: Type -> Type -> Bool
+t1 ~=~ t2 = isJust $ foldFix isEq t1 t2
+  where
+    isEq :: TypeF (Type -> Maybe ()) -> Type -> Maybe ()
+    isEq t1' = match t1' . unFix
 
--- | Extracts the type information from a label, failing if there isn't any.
-expectType :: (Labelled f, Pretty (f TypeInfo)) => f TypeInfo -> Type SrcSpan
-expectType x = let TypeInfo _ mt = getLabel x in case mt of
+-- | Extracts the type information from an annotation, failing if it's absent.
+expectType
+    :: Pretty (Fix (Biann TypeInfo f g)) => Fix (Biann TypeInfo f g) -> Type
+expectType x = let TypeInfo _ mt = getBiann $ unFix x in case mt of
     Nothing -> error $ "could not deduce type for " <> show (pretty x)
     Just t -> t
 
--- | Labels the entire functor with no type information.
-noType :: Functor f => f SrcSpan -> f TypeInfo
-noType = fmap $ flip TypeInfo Nothing
+-- | Reannotates the entire fixed point with no type information.
+noType :: Functor f => Fix (Ann SrcSpan f) -> Fix (Ann TypeInfo f)
+noType = mapFix . mapAnn $ flip TypeInfo Nothing
+
+-- | Relabels every node with no type information.
+lnoType :: Functor f => f SrcSpan -> f TypeInfo
+lnoType = fmap (`TypeInfo` Nothing)

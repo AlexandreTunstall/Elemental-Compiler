@@ -9,55 +9,59 @@ module Language.Elemental.Emit.Internal
 
 import Control.Arrow (Arrow(first))
 import Control.Effect.Empty (empty)
+import Data.Fix (Fix(Fix))
 import Data.Word (Word32)
 import LLVM.AST qualified as LLVM
 import LLVM.AST.Type qualified as LLVM.Type
 
-import Language.Elemental.Syntax.Internal hiding ((:$), (:@), (:\), (:->))
+import Language.Elemental.Syntax.Internal
+import Language.Elemental.Syntax.Synonyms
 
 
 -- | Marshallable type used to represent a bit.
-pattern BitType :: a -> Type a
-pattern BitType l <- Forall l (Arrow _ (TypeVar _ 0)
-    (Arrow _ (TypeVar _ 0) (TypeVar _ 0)))
-  where
-    BitType l = Forall l . Arrow l (TypeVar l 0)
-        $ Arrow l (TypeVar l 0) (TypeVar l 0)
+pattern BitType :: Type
+pattern BitType = FA (TV 0 :->: TV 0 :->: TV 0)
 
 -- | Splits a foreign function type into its argument types and its return type.
-maybeSplitArrow :: Type a -> Maybe ([Type a], Type a)
+maybeSplitArrow :: Type -> Maybe ([Type], Type)
 maybeSplitArrow ta = case ta of
-    Arrow _ tx ty -> first (tx :) <$> maybeSplitArrow ty
-    SpecialType _ (IOType _ tx) -> pure ([], tx)
+    tx :->: ty -> first (tx :) <$> maybeSplitArrow ty
+    IOT tx -> pure ([], tx)
+    _ -> empty
+
+-- | Splits a foreign function type into its argument types and its return type.
+maybeSplitArrowA :: AnnType a -> Maybe ([AnnType a], AnnType a)
+maybeSplitArrowA (Fix ta) = case extract ta of
+    Arrow tx ty -> first (tx :) <$> maybeSplitArrowA ty
+    SpecialType (IOType tx) -> pure ([], tx)
     _ -> empty
 
 -- | Converts an Elemental pointer type to an LLVM type.
-toMaybePointerType :: Type a -> Maybe LLVM.Type
+toMaybePointerType :: Type -> Maybe LLVM.Type
 toMaybePointerType t = case t of
-    SpecialType _ (PointerType _ _ tx)
-        -> LLVM.Type.ptr <$> toMaybeArgumentType tx
+    PtrT _ tx -> LLVM.Type.ptr <$> toMaybeArgumentType tx
     _ -> empty
 
 -- | Converts an Elemental type to an LLVM type.
-toMaybeArgumentType :: Type a -> Maybe LLVM.Type
+toMaybeArgumentType :: Type -> Maybe LLVM.Type
 toMaybeArgumentType t = toMaybeInternalType t >>= \case
     LlvmInt 0 -> empty
     LlvmInt size -> pure $ LLVM.IntegerType size
 
 -- | Converts a type to an internal type.
-toMaybeInternalType :: Type a -> Maybe (InternalType a)
+toMaybeInternalType :: Type -> Maybe (InternalType Type)
 toMaybeInternalType t = case t of
     {-
         If you update this function, also update the "unmarshallable type"
         diagnostic so that it remains accurate.
     -}
-    BitType _ -> pure $ LlvmInt 1
-    Forall _ (Arrow _ t' (TypeVar _ 0)) -> LlvmInt <$> case countTuple t' of
-        Just 1 -> empty
-        size -> size
+    BitType -> pure $ LlvmInt 1
+    FA (t' :->: TV 0) -> LlvmInt <$> case countTuple t' of
+            Just 1 -> empty
+            size -> size
     _ -> empty
   where
-    countTuple :: Type a -> Maybe Word32
-    countTuple (Arrow _ (BitType _) t') = succ <$> countTuple t'
-    countTuple (TypeVar _ 0) = pure 0
+    countTuple :: Type -> Maybe Word32
+    countTuple (BitType :->: t') = succ <$> countTuple t'
+    countTuple (TV 0) = pure 0
     countTuple _ = empty

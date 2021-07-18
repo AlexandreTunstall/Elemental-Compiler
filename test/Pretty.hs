@@ -5,7 +5,7 @@ module Pretty where
 import Data.Bifunctor (Bifunctor(bimap))
 import Data.Functor (void)
 import Data.Text qualified as T
-import Hedgehog (Property, forAll, property, tripping)
+import Hedgehog (Property, property)
 import Prettyprinter (defaultLayoutOptions, layoutPretty)
 import Prettyprinter.Render.Text (renderStrict)
 import Test.Tasty (TestTree, testGroup)
@@ -21,7 +21,7 @@ prettyTests = testGroup "Pretty" [testProperty "Parseable" propParseDecl]
 
 propParseDecl :: Property
 propParseDecl = property $ do
-    decl <- forAll $ genDecl 5
+    decl <- forAllPretty $ genDecl 5
     tripping decl enc dec
   where
     enc :: Decl () -> T.Text

@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,10 +12,10 @@ module Language.Elemental.Emit
     ( emitProgram
     ) where
 
-import Control.Arrow (Arrow((***)), (>>>))
-import Control.Effect.Choose (Choose, (<|>))
-import Control.Effect.Empty (Empty, empty)
+import Control.Applicative (empty)
 import Control.Monad (void, (>=>))
+import Data.Fix (Fix(Fix), unFix)
+import Data.IntMap qualified as IM
 import Data.Map qualified as M
 import Data.Maybe (fromMaybe)
 import Data.Text.Short (toShortByteString)
@@ -33,62 +34,91 @@ import Language.Elemental.Emit.Internal
 import Language.Elemental.Normalise
 import Language.Elemental.Primitive
 import Language.Elemental.Rewrite
-import Language.Elemental.Syntax.Internal hiding ((:$), (:@), (:\), (:->))
+import Language.Elemental.Syntax.Internal
 import Language.Elemental.Syntax.Pretty
+import Language.Elemental.Syntax.Synonyms
 
 
 -- | Converts an Elemental program into a list of LLVM definitions.
-emitProgram :: Has (Rewriter (Expr a)) sig m => Program a -> m [Definition]
+emitProgram
+    :: (Has (Birewriter ExprF TypeF) sig m) => Program a -> m [Definition]
 emitProgram p = runModuleBuilder (const . pure) emptyModuleBuilder
-    $ inlinePrimitives p >>= normaliseProgram normaliseLlvmLazy
+    $ inlinePrimitives p >>= normaliseProgram (normRules <> emitRules)
     >>= traverse emitDecl . getDecls
   where
     getDecls :: Program a -> [Decl a]
     getDecls (Program _ decls) = decls
-{-# INLINABLE emitProgram #-}
 
--- | Emits an Elemental declaration.
 emitDecl
-    :: (Has ModuleBuilder sig m, Has (Rewriter (Expr a)) sig m)
+    :: (Has (Birewriter ExprF TypeF) sig m, Has ModuleBuilder sig m)
     => Decl a -> m ()
 emitDecl = \case
     Binding {} -> pure ()
     ForeignImport {} -> error "emitDecl: unexpected foreign import"
-    ForeignExport l foreignName expr t -> do
-        let (argTys, retTy) = arrowToLlvmType t
-            targs = fst $ splitArrow t
-        void . function (LLVM.Name $ toShortByteString foreignName) argTys retTy
-            $ applyArgs l expr (reverse targs) . reverse >=> emitExpr
+    ForeignExport _ foreignName expr t -> do
+        let (targs, tret) = splitArrow $ stripType t
+            ltargs = toArgumentType <$> targs
+            ltret = toReturnType tret
+        void . function (LLVM.Name $ toShortByteString foreignName) ltargs ltret
+            $ applyArgs (stripExpr expr) targs tret >=> emitExpr
     ForeignPrimitive {} -> error "emitDecl: unexpected foreign primitive"
     ForeignAddress {} -> error "emitDecl: unexpected foreign address"
   where
     applyArgs
-        :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m)
-        => a -> Expr a -> [Type a] -> [Operand] -> m (Expr a)
-    applyArgs l ex targs ops = normaliseLlvm $ foldr (flip $ App l) ex
-        $ zipWith (marshall l) targs ops
-
-    marshall :: a -> Type a -> Operand -> Expr a
-    marshall l t op = App l (marshallIn l t) . InternalExpr l $ LlvmOperand op
+        :: Has (Birewriter ExprF TypeF) sig m
+        => Expr -> [Type] -> Type -> [Operand] -> m Expr
+    applyArgs expr targs tret ops = birewriteM (normRules <> emitRules) $ foldr
+        (\(t, op) eb -> marshallIn t tret
+            :$: IE (LlvmValue $ LlvmOperand op) :$: (t :\: eb))
+        (foldr (flip (:$:) . V) expr . reverse $ zipWith const [0..] targs)
+        . reverse $ zip targs ops
 
 -- | Emits an expression with a return instruction and starts a new basic block.
-emitExpr
-    :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m) => Expr a -> m ()
+emitExpr :: (Has (Birewriter ExprF TypeF) sig m, Has IRBuilder sig m) => Expr -> m ()
 emitExpr expr = do
-    mop <- emitExprBlock expr
-    emitTerm $ Ret mop []
+    lv <- emitExprBlock expr
+    emitTerm $ Ret (toMOp lv) []
     void block
+  where
+    toMOp :: LlvmValue -> Maybe LLVM.Operand
+    toMOp LlvmUnit = Nothing
+    toMOp (LlvmOperand op) = pure op
 
 -- | Emits a basic block for an expression.
 emitExprBlock
-    :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m)
-    => Expr a -> m (Maybe LLVM.Operand)
-emitExprBlock expr = case expr of
-    InternalExpr _ Unit -> pure Nothing
-    InternalExpr _ (LlvmOperand op) -> pure $ pure op
-    InternalExpr _ (Emit m) -> m >>= emitExprBlock
-    _ -> error $ "emitExprBlock: illegal expression: "
+    :: forall sig m. (Has (Birewriter ExprF TypeF) sig m, Has IRBuilder sig m)
+    => Expr -> m LlvmValue
+emitExprBlock = \case
+    IE (LlvmIO (LlvmGen mlv)) -> mlv
+    IE (BindPrim _ (IE TestBit :$: IE (LlvmValue (LlvmOperand opc))) t ey)
+        -> do
+            bt <- fresh
+            bf <- fresh
+            br <- fresh
+            emitTerm $ CondBr opc bt bf []
+            emitBlockStart bt
+            lvt <- bindTo ey . TL $ TV 0 :\: TV 0 :\: V 1
+            bt' <- currentBlock
+            emitTerm $ Br br []
+            emitBlockStart bf
+            lvf <- bindTo ey . TL $ TV 0 :\: TV 0 :\: V 0
+            bf' <- currentBlock
+            emitTerm $ Br br []
+            emitBlockStart br
+            let lt = internalTypeToLlvm $ toInternalType t
+            case (lvt, lvf) of
+                (LlvmOperand opt, LlvmOperand opf) -> fmap LlvmOperand
+                    . emitInstr lt $ LLVM.Phi lt [(opt, bt'), (opf, bf')] []
+                (_, _) -> pure LlvmUnit
+    IE (BindPrim _ ex _ ey) -> do
+        lv <- emitExprBlock ex
+        bindTo ey $ IE $ LlvmValue lv
+    expr -> error $ "Emit.emitExprBlock: illegal expression: "
         <> showDoc (prettyExpr0 expr)
+  where
+    bindTo :: Expr -> Expr -> m LlvmValue
+    bindTo e e'
+        = birewriteM (normRules <> emitRules) (e :$: e') >>= emitExprBlock
 
 -- | Converts primitives and foreign imports into the corresponding bindings.
 inlinePrimitives :: Has ModuleBuilder sig m => Program a -> m (Program a)
@@ -98,20 +128,24 @@ inlinePrimitives (Program l decls) = Program l <$> traverse go decls
     go decl = case decl of
         Binding {} -> pure decl
         ForeignImport l' name foreignName t -> Binding l' name <$> do
-            let (targs, tret) = splitArrow t
+            let (targs, tret) = splitArrow $ stripType t
                 ltargs = toArgumentType <$> targs
                 ltret = toReturnType tret
+                argc = length targs
             func <- extern (LLVM.Name $ toShortByteString foreignName)
                 ltargs ltret
-            pure $ foldr (Lam l') (foldr (flip $ App l')
-                (InternalExpr l' $ Call func (length ltargs) ltret)
-                $ zipWith (genMarshall l') [0..] $ reverse targs
-                ) targs
+            pure . annExpr l' $ foldr (:\:) (foldr
+                (\targ eb -> marshallOut targ tret :$: V (argc - 1)
+                    :$: (IT (toInternalType targ) :\: eb))
+                (foldr (flip (:$:)) (IE $ Call func argc ltret)
+                    $ V <$> zipWith const [0..] targs)
+                targs) targs
         ForeignExport {} -> pure decl
         ForeignPrimitive l' dname@(DeclName _ name) _ -> pure . Binding l' dname
-            . (<$) l' . snd $ primitives M.! name
+            . annExpr l' . snd $ primitives M.! name
         ForeignAddress l' dname addr t -> pure . Binding l' dname
-            . InternalExpr l' . LlvmOperand . LLVM.ConstantOperand
+            . Fix . Biann l' . InternalExpr
+            . LlvmValue . LlvmOperand . LLVM.ConstantOperand
             {-
                 With GHC 9, it would be sounder to work out the needed bit size
                 using the base 2 logarithm. Although it can be done with older
@@ -122,218 +156,177 @@ inlinePrimitives (Program l decls) = Program l <$> traverse go decls
                 a smaller size than the architecture may truncate the address.
             -}
             . LLVM.Constant.IntToPtr (LLVM.Constant.Int 128 addr)
-            $ toPointerType t
+            $ toPointerType $ stripType t
 
-    genMarshall :: a -> Int -> Type a -> Expr a
-    genMarshall l' idx t = App l' (marshallOut l' t) (Var l' idx)
-
-{-|
-    Normalises an expression. Unlike 'normaliseExpr', this has additional
-    rewrite rules to normalise internal expressions.
--}
-normaliseLlvm
-    :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m)
-    => Expr a -> m (Expr a)
-normaliseLlvm = beginRewrite (rewriteExpr $ rewriteLlvm normaliseLlvm)
-    >=> joinEmit
-  where
-    joinEmit
-        :: (Has IRBuilder sig m, Has (Rewriter (Expr a)) sig m)
-        => Expr a -> m (Expr a)
-    joinEmit ex = case ex of
-        InternalExpr _ (Emit ey) -> ey >>= normaliseLlvm
-        _ -> pure ex
-
-normaliseLlvmLazy :: (Has (Rewriter (Expr a)) sig m) => Expr a -> m (Expr a)
-normaliseLlvmLazy = beginRewrite (rewriteExpr $ rewriteLlvm normaliseLlvm)
-    >=> joinEmitLazy
-  where
-    joinEmitLazy :: Has (Rewriter (Expr a)) sig m => Expr a -> m (Expr a)
-    joinEmitLazy ex = case ex of
-        InternalExpr l (Emit ey) -> pure
-            $ InternalExpr l $ Emit $ ey >>= normaliseLlvm
-        _ -> pure ex
-{-# INLINABLE normaliseLlvmLazy #-}
-
--- Pattern synonyms so that the rewriter is readable.
-
--- | 'App' synonym
-pattern (:$) :: Expr () -> Expr () -> Expr ()
-pattern ef :$ ex = App () ef ex
-infixl 1 :$
-
--- | 'TypeApp' synonym
-pattern (:@) :: Expr () -> Type () -> Expr ()
-pattern ef :@ tx = TypeApp () ef tx
-infixl 1 :@
-
--- | 'Lam' synonym
-pattern (:\) :: Type () -> Expr () -> Expr ()
-pattern tx :\ ey = Lam () tx ey
-infixr 0 :\
-
--- | v'Arrow' synonym
-pattern (:->) :: Type () -> Type () -> Type ()
-pattern tx :-> ty = Arrow () tx ty
-infixr 2 :->
-
--- | 'Var' synonym
-pattern V :: Int -> Expr ()
-pattern V idx = Var () idx
-
--- | 'TypeVar' synonym
-pattern TV :: Int -> Type ()
-pattern TV idx = TypeVar () idx
-
--- | 'TypeLam' synonym
-pattern TL :: Expr () -> Expr ()
-pattern TL ey = TypeLam () ey
-
--- | 'Forall' synonym
-pattern FA :: Type () -> Type ()
-pattern FA ty = Forall () ty
-
--- | 'IOType' synonym
-pattern IOT :: Type () -> Type ()
-pattern IOT tx = SpecialType () (IOType () tx)
-
--- | 'PointerType' synonym
-pattern PtrT :: PointerKind -> Type () -> Type ()
-pattern PtrT pk tx = SpecialType () (PointerType () pk tx)
-
--- | v'InternalExpr' synonym
-pattern IE :: InternalExpr () -> Expr ()
-pattern IE ie = InternalExpr () ie
-
--- | v'InternalType' synonym
-pattern IT :: InternalType () -> Type ()
-pattern IT it = SpecialType () (InternalType () it)
-
-{-|
-    Rewrites an expression into a lower-level expression.
-    This is used to fold an expression containing LLVM symbols into
-    either 'Unit' or an 'LlvmOperand' (either of which may be nested in 'Emit').
--}
-rewriteLlvm
-    :: forall sig m a. (Has Choose sig m, Has Empty sig m)
-    => (forall sig' n b. (Has IRBuilder sig' n,  Has (Rewriter (Expr b)) sig' n)
-        => Expr b -> n (Expr b))
-    -> Expr a -> m (Expr a)
-rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
-    <|> llvmBits ea <|> withLabel llvmBitVector ea
-    <|> withLabel (llvmCall []) ea <|> llvmPointer ea <|> liftEmit ea
-  where
-    withLabel :: (Functor f, Labelled f) => (f () -> m (f ())) -> f a -> m (f a)
-    withLabel f ex = fmap (getLabel ex <$) . f $ () <$ ex
-
-    {-
-        Rules that could be worth adding:
-        - #isolate#i# < ... >
-    -}
-    reassociate :: Expr a -> m (Expr a)
-    reassociate = withLabel $ \case
-        -- bindIO @t (pureIO @t x) = Λ λ(t → IO 0) 0 x
-        IE BindIO :@ _ :$ (IE PureIO :@ t :$ e) -> pure . TL
-            $ t :-> IOT (TV 0) :\ V 0 :$ e
-        -- #testBit b @(t1 → t2) x y = λt1 #testBit b @t2 (x[+/0] 0) (y[+/0] 0)
-        IE TestBit :$ eb :@ tx :-> ty :$ ex :$ ey -> pure
-            $ tx :\ IE TestBit :$ eb :@ ty
-            :$ (incrementExpr 0 ex :$ V 0)
-            :$ (incrementExpr 0 ey :$ V 0)
-        -- #testBit b @(∀ t) x y = Λ #testBit b @t (x[+/@0] @0) (y[+/@0] @0)
-        IE TestBit :$ eb :@ FA t :$ ex :$ ey -> pure . TL
-            $ IE TestBit :$ eb :@ t
-            :$ (incrementTypeInExpr 0 ex :@ TV 0)
-            :$ (incrementTypeInExpr 0 ey :@ TV 0)
-        _ -> empty
-
-    llvmPure :: Expr a -> m (Expr a)
-    llvmPure = withLabel $ \case
-        IE PureIO :@ t -> case toMaybeInternalType t of
-            Just (LlvmInt 0) -> pure $ marshallOut () t
-            Just (LlvmInt size) -> pure
-                $ t :\ IE (PurePrim size) :$ (marshallOut () t :$ V 0)
-            Nothing -> empty
-        IE (PurePrim _) :$ IE (LlvmOperand op) -> pure . IE $ LlvmOperand op
-        _ -> empty
-
-    llvmBind :: Expr a -> m (Expr a)
-    llvmBind = withLabel $ \case
-        IE BindIO :@ t -> case toMaybeInternalType t of
-            Just (LlvmInt size) -> pure $ IOT t :\ TL
-                (t :-> IOT (TV 0) :\ IE (BindPrim size) :$ V 1 :@ TV 0
-                :$ (IT (LlvmInt size) :\ V 1 :$ (marshallIn () t :$ V 0)))
-            Nothing -> empty
-        IE (BindPrim 0) :$ IE Unit :@ _ :$ ef -> pure $ ef :$ IE Unit
-        IE (BindPrim _) :$ IE (LlvmOperand op) :@ _ :$ ef -> pure
-            $ ef :$ IE (LlvmOperand op)
-        _ -> empty
-
-    llvmBits :: Expr a -> m (Expr a)
-    llvmBits = withLabel $ \case
-        IE (IsolateBit bit size) :$ IE (LlvmOperand op) -> pure . IE $ Emit
-            $ IE . LlvmOperand <$> do
+-- | Rewrite rules for emitting Elemental expressions as LLVM.
+emitRules :: [Birule ExprF TypeF]
+emitRules =
+    -- bindIO @t (pureIO @t x) = (λt Λ λ(t → IO 0) 0 1) x
+    [ IEI BindIO :@? st 0 :$? (IEI PureIO :@? st 0 :$? se 0)
+        :=> (gt 0 :\= TLO (gt 0 :->= IOTO (TVO 0) :\= VO 0 :$= VO 1)) :$= ge 0
+    -- Reassociate binds
+    , Fix (Bisome $ \case
+        IE (BindPrim size1 (IE (BindPrim size2 ex t1 ey)) t2 ez) -> pure
+            ( IM.fromList [(0, size1), (1, size2)]
+            , IM.fromList [(0, ex), (1, ey), (2, ez)]
+            , IM.fromList [(0, t1), (1, t2)]
+            )
+        _ -> mempty
+        ) :=> Fix (Bidynamic $ \(sizes, es, ts) -> IE
+            . BindPrim (sizes ! 1) (es ! 0) (ts ! 1)
+            $ IT (LlvmInt $ sizes ! 0) :\: IE (BindPrim
+                (sizes ! 0) (incrementExpr 0 (es ! 1) :$: V 0)
+                (ts ! 1) (incrementExpr 0 $ es ! 2)
+                )
+            )
+    , IEI BindIO :@? st 0 :$? Fix (Bisome $ \case
+        IE (BindPrim size ex t ey) -> pure (IM.singleton 0 t,
+            (IM.singleton 0 size, IM.fromList [(0, ex), (1, ey)]))
+        _ -> mempty
+        ) :@? st 1 :$? pe (pure . mkSnd . mkSnd) 2
+        :=> Fix (Bidynamic $ \(ts, (sizes, es)) -> IE
+            . BindPrim (sizes ! 0) (es ! 0) (ts ! 1)
+            $ IT (LlvmInt $ sizes ! 0) :\: IE BindIO
+                :@: ts ! 0 :$: (incrementExpr 0 (es ! 1) :$: V 0)
+                :@: ts ! 1 :$: incrementExpr 0 (es ! 2)
+            )
+    -- pureIO rules
+    , IEI PureIO :@? Fix (Some $ \t -> (,) (IM.singleton 0 t) . IM.singleton 0
+        <$> toMaybeInternalType t)
+        :=> gt 0 :\= Fix
+            (Bidynamic $ \(ts, its) -> marshallOut (ts ! 0) (IT $ its ! 0)
+                :$: V 0 :$: case its ! 0 of
+                    LlvmInt size -> IE $ PurePrim size
+                    )
+    , Fix (Bisome $ \case
+        Fix (InternalExpr (PurePrim _)) -> pure mempty
+        _ -> mempty
+        ) :$? Fix (Bisome $ \case
+            Fix (InternalExpr (LlvmValue lv)) -> pure $ IM.singleton 0 lv
+            _ -> mempty
+            )
+        :=> re id 0 (Fix . InternalExpr . pureLlvmIO)
+    -- Convert bindIO @t to #bindi{n} when t is marshallable
+    , IEI BindIO :@? Fix (Some
+            $ \t -> mkFst . (,) (IM.singleton 1 t) . IM.singleton 0
+                <$> toMaybeInternalType t)
+        :$? se 0 :@? pt (pure . mkFst . mkFst) 0 :$? se 1
+        :=> Fix (Bidynamic $ \((ts, its), es) -> let LlvmInt size = its ! 0
+            in IE $ BindPrim size (es ! 0) (ts ! 0) (IT (its ! 0)
+                :\: marshallIn (ts ! 1) (ts ! 0) :$: V 0
+                    :$: incrementExpr 0 (es ! 1))
+                )
+    -- Bitwise arithmetic
+    , Fix (Bisome $ \v -> case unFix v of
+        InternalExpr (IsolateBit bit size)
+            -> pure . mkSnd $ IM.singleton 0 (bit, size)
+        _ -> mempty
+        ) :$? pop mkFst 0
+        :=> Fix (Bidynamic $ \(ops, bits) -> Fix . InternalExpr $ LlvmIO
+            $ LlvmGen $ do
+                let op = ops ! 0
+                    (bit, size) = bits ! 0
                 shifted <- emitInstr (LLVM.IntegerType size)
                     $ LLVM.LShr False op (LLVM.ConstantOperand
                         $ LLVM.Constant.Int size $ toInteger bit - 1) []
-                emitInstr (LLVM.IntegerType size)
+                fmap LlvmOperand . emitInstr (LLVM.IntegerType size)
                     $ LLVM.Trunc shifted (LLVM.IntegerType 1) []
-        IE TestBit :$ IE (LlvmOperand opc) :@ IT (LlvmInt _)
-            :$ IE (LlvmOperand opt) :$ IE (LlvmOperand opf) -> pure . IE $ Emit
-                $ IE . LlvmOperand <$> emitInstr (LLVM.IntegerType 1)
-                    (LLVM.Select opc opt opf [])
-        IE TestBit :$ IE (LlvmOperand opc) :@ IOT t :$ et :$ ef -> do
-            pure . IE $ Emit $ IE <$> do
-                bt <- fresh
-                bf <- fresh
-                br <- fresh
-                emitTerm $ CondBr opc bt bf []
-                emitBlockStart bt
-                mopt <- mapExprRewriter (const ()) (normExpr et)
-                    >>= emitExprBlock
-                bt' <- currentBlock
-                emitTerm $ Br br []
-                emitBlockStart bf
-                mopf <- mapExprRewriter (const ()) (normExpr ef)
-                    >>= emitExprBlock
-                bf' <- currentBlock
-                emitTerm $ Br br []
-                emitBlockStart br
-                let lt = internalTypeToLlvm $ toInternalType t
-                case (,) <$> mopt <*> mopf of
-                    Nothing -> pure Unit
-                    Just (opt, opf) -> fmap LlvmOperand . emitInstr lt
-                        $ LLVM.Phi lt [(opt, bt'), (opf, bf')] []
-        _ -> empty
-
-    llvmBitVector :: Expr () -> m (Expr ())
-    llvmBitVector (IE (BitVector es))
-        | all isOperand es = pure . IE $ Emit $ IE . LlvmOperand <$> do
-            let size = fromIntegral $ length es :: Word32
+            )
+    -- Bit vector
+    , Fix (Bisome $ \case
+        IE (BitVector es) -> IM.singleton 0 <$> traverse mop es
+        _ -> mempty)
+        :=> Fix (Bidynamic $ \opss -> IE $ LlvmIO $ LlvmGen $ do
+            let ops = opss ! 0
                 mergeInts x opy = do
                     y <- opy
-                    emitInstr (LLVM.IntegerType size)
-                        $ LLVM.Or x y []
-                xs = toOperand <$> es
-            exts <- for xs $ \x -> emitInstr (LLVM.IntegerType 1)
+                    emitInstr (LLVM.IntegerType size) $ LLVM.Or x y []
+                size = fromIntegral $ length ops :: Word32
+            exts <- for ops $ \x -> emitInstr (LLVM.IntegerType 1)
                 $ LLVM.ZExt x (LLVM.IntegerType size) []
             sh <- for (zip [0..] exts) $ \(bit, ext)
-                -> emitInstr (LLVM.IntegerType size)
-                    $ LLVM.Shl False True ext
-                        (LLVM.ConstantOperand $ LLVM.Constant.Int size bit) []
-            foldr mergeInts (pure . LLVM.ConstantOperand
-                $ LLVM.Constant.Int size 0) sh
-        | any isEmit es = pure . IE $ Emit
-            $ IE . BitVector <$> traverse runEmit es
-        | otherwise = empty
-    llvmBitVector _ = empty
+                -> emitInstr (LLVM.IntegerType size) $ LLVM.Shl False True ext
+                    (LLVM.ConstantOperand $ LLVM.Constant.Int size bit) []
+            LlvmOperand <$> foldr mergeInts
+                (pure . LLVM.ConstantOperand $ LLVM.Constant.Int size 0) sh
+            )
+    -- Call
+    , Fix (Bisome $ (IM.singleton 0 <$>) . matchCall [])
+        :=> Fix (Bidynamic $ \ios -> IE $ LlvmIO $ ios ! 0)
+    -- Pointer rules
+    , IEI LoadPointer :@? st 0 :$? pop mkSnd 0
+        :=> Fix (Bidynamic $ \(ts, ops) -> IE . LlvmIO $ LlvmGen
+            $ LlvmOperand <$> emitInstr (toPointerType $ ts ! 0)
+                (LLVM.Load True (ops ! 0) atomic 1 []))
+    , IEI StorePointer :@? Fix (Some $ \t -> (,) (IM.singleton 0 t)
+            . IM.singleton 0 <$> toMaybeInternalType t)
+        :=> ft 0 (PtrT WritePointer) :\= gt 0 :\= Fix (Bidynamic
+            $ \(ts, its) -> marshallOut (ts ! 0) (FA $ TV 0 :->: TV 0)
+                :$: V 0 :$: (IT (its ! 0)
+                    :\: IE (StorePrim . internalTypeToLlvm $ its ! 0)
+                    :$: V 2 :$: V 0))
+    , Fix (Bisome $ \case
+        IE (StorePrim _) -> pure mempty
+        _ -> mempty
+        ) :$? pop id 0 :$? pop id 1
+        :=> Fix (Bidynamic $ \ops -> IE . LlvmIO $ LlvmGen $ do
+            emitInstrVoid $ LLVM.Store True (ops ! 0) (ops ! 1) atomic 1 []
+            pure LlvmUnit
+            )
+    ]
+  where
+    st :: Monoid b => Int -> TypeRuleIn (IM.IntMap Type, b)
+    st = pt $ pure . mkFst
 
-    llvmCall :: [LLVM.Operand] -> Expr () -> m (Expr ())
-    llvmCall ops = \case
-        ex :$ IE (LlvmOperand op) -> llvmCall (op : ops) ex
+    se :: Monoid b => Int -> ExprRuleIn (b, IM.IntMap Expr)
+    se = pe $ pure . mkSnd
+
+    pt :: (IM.IntMap Type -> Maybe a) -> Int -> TypeRuleIn a
+    pt f idx = Fix . Some $ f . IM.singleton idx
+
+    pe :: (IM.IntMap Expr -> Maybe a) -> Int -> ExprRuleIn a
+    pe f idx = Fix . Bisome $ f . IM.singleton idx
+
+    gt :: Int -> TypeRuleOut (IM.IntMap Type, b)
+    gt idx = ft idx id
+
+    ge :: Int -> ExprRuleOut (b, IM.IntMap Expr)
+    ge idx = fe idx id
+
+    ft :: Int -> (a -> Type) -> TypeRuleOut (IM.IntMap a, b)
+    ft = rt fst
+
+    fe :: Int -> (a -> Expr) -> ExprRuleOut (b, IM.IntMap a)
+    fe = re snd
+
+    rt :: (a -> IM.IntMap a') -> Int -> (a' -> Type) -> TypeRuleOut a
+    rt sel idx f = Fix . Dynamic $ \s -> f $ sel s ! idx
+
+    re :: (a -> IM.IntMap a') -> Int -> (a' -> Expr) -> ExprRuleOut a
+    re sel idx f = Fix . Bidynamic $ \s -> f $ sel s ! idx
+
+    mkFst :: Monoid b => a -> (a, b)
+    mkFst x = (x, mempty)
+
+    mkSnd :: Monoid b => a -> (b, a)
+    mkSnd x = (mempty, x)
+
+    pop :: (IM.IntMap LLVM.Operand -> a) -> Int -> ExprRuleIn a
+    pop f idx = Fix . Bisome $ (f . IM.singleton idx <$>) . mop
+    
+    mop :: Expr -> Maybe LLVM.Operand
+    mop (IE (LlvmValue (LlvmOperand op))) = pure op
+    mop _ = empty
+    
+    pureLlvmIO :: LlvmValue -> InternalExpr t rec
+    pureLlvmIO v = LlvmIO $ LlvmGen $ pure v
+
+    matchCall :: [LLVM.Operand] -> Expr -> Maybe (LlvmGen LlvmValue)
+    matchCall ops = \case
+        ex :$: IE (LlvmValue (LlvmOperand op)) -> matchCall (op : ops) ex
         IE (Call fop argc tret) -> if argc == length ops
-            then pure . IE $ Emit $ IE <$> case tret of
-                LLVM.VoidType -> Unit <$ emitInstrVoid (callInstr fop ops)
+            then pure $ LlvmGen $ case tret of
+                LLVM.VoidType -> LlvmUnit <$ emitInstrVoid (callInstr fop ops)
                 _ -> LlvmOperand <$> emitInstr tret (callInstr fop ops)
             else empty
         _ -> empty
@@ -342,109 +335,64 @@ rewriteLlvm normExpr ea = reassociate ea <|> llvmPure ea <|> llvmBind ea
         callInstr fop argOps = LLVM.Call Nothing LLVM.CallConv.C [] (Right fop)
             ((, []) <$> argOps) [] []
     
-    llvmPointer :: Expr a -> m (Expr a)
-    llvmPointer = withLabel $ \case
-        IE LoadPointer :@ t :$ IE (LlvmOperand op)
-            -> pure . IE $ Emit $ IE . LlvmOperand <$> emitInstr (toPointerType t)
-                (LLVM.Load True op atomic 1 [])
-        IE StorePointer :@ t -> case toMaybeInternalType t of
-            Just it -> pure $ PtrT WritePointer t :\ t
-                :\ IE (StorePrim $ internalTypeToLlvm it)
-                :$ V 1 :$ (marshallOut () t :$ V 0)
-            Nothing -> empty
-        IE (StorePrim _) :$ IE (LlvmOperand ptr) :$ IE (LlvmOperand op)
-            -> pure . IE $ Emit $ do
-                emitInstrVoid $ LLVM.Store True ptr op atomic 1 []
-                pure $ IE Unit
-        _ -> empty
-      where
-        atomic :: Maybe LLVM.Atomicity
-        atomic = Nothing
-
-    liftEmit :: Expr a -> m (Expr a)
-    liftEmit = withLabel $ \case
-        IE (Emit ef) :$ ex -> pure . IE $ Emit $ (:$ ex) <$> ef
-        ef :$ IE (Emit ex) -> pure . IE $ Emit $ (ef :$) <$> ex
-        IE (Emit ef) :@ tx -> pure . IE $ Emit $ (:@ tx) <$> ef
-        _ -> empty
-
-    isEmit :: Expr () -> Bool
-    isEmit ex = case ex of
-        IE (Emit _) -> True
-        _ -> False
-
-    runEmit
-        :: forall si' n. (Has IRBuilder si' n, Has (Rewriter (Expr ())) si' n)
-        => Expr () -> n (Expr ())
-    runEmit ex = case ex of
-        IE (Emit ey) -> ey
-        _ -> pure ex
-
-    isOperand :: Expr () -> Bool
-    isOperand ex = case ex of
-        IE (LlvmOperand _) -> True
-        _ -> False
-
-    toOperand :: Expr () -> LLVM.Operand
-    toOperand ex = case ex of
-        IE (LlvmOperand op) -> op
-        _ -> error $ "rewriteLlvm: expected an LLVM operand, got: "
-            <> showDoc (prettyExpr0 ex)
+    atomic :: Maybe LLVM.Atomicity
+    atomic = Nothing
 
 -- | Creates a function that marshalls from an LLVM type to an Elemental type.
-marshallIn :: a -> Type a -> Expr a
-marshallIn l t = case toInternalType t of
-    LlvmInt 0 -> Lam l (SpecialType l . InternalType l $ LlvmInt 0) . TypeLam l
-        . Lam l (TypeVar l 0) $ Var l 0
-    LlvmInt 1 -> InternalExpr l TestBit
-    LlvmInt size -> Lam l (SpecialType l . InternalType l $ LlvmInt size)
-        . TypeLam l . Lam l (foldr (const . Arrow l $ BitType l)
-            (TypeVar l 0) [0 .. size - 1])
-        . foldr (flip $ App l) (Var l 0)
-        $ App l (InternalExpr l TestBit) . flip (App l) (Var l 1)
-            . InternalExpr l . flip IsolateBit size <$> [1 .. size]
+marshallIn :: Type -> Type -> Expr
+marshallIn t tret = IT it :\: t :->: IOT tret :\: case it of
+    LlvmInt 0 -> V 0 :$: TL (TV 0 :\: V 0)
+    LlvmInt 1 -> IE $ BindPrim 1 (IE TestBit :$: V 1) tret (V 0)
+    LlvmInt size -> foldr (\idx expr -> IE $ BindPrim 1 (IE $ BindPrim
+            1 (IE (IsolateBit idx size) :$: toV idx)
+            BitType (IE TestBit)
+        ) t $ BitType :\: expr)
+        (toV size :$: TL (foldr (const (BitType :->:)) (TV 0) [1..size]
+            :\: foldr (flip (:$:)) (V 0) (toV . (size-) <$> [0..size-1])
+            ))
+        [1..size]
+  where
+    it :: InternalType Type
+    it = toInternalType t
+
+    toV :: Word32 -> Expr
+    toV idx = V $ fromIntegral idx
 
 -- | Creates a function that marshalls from an Elemental type to an LLVM type.
-marshallOut :: a -> Type a -> Expr a
-marshallOut l t = case toInternalType t of
-    LlvmInt 0 -> Lam l t $ InternalExpr l Unit
-    LlvmInt 1 -> Lam l t . marshallBit l $ Var l 0
-    LlvmInt size -> Lam l t . App l (TypeApp l (Var l 0)
-            (SpecialType l . InternalType l $ LlvmInt size))
-        . foldr (Lam l) (InternalExpr l . BitVector
-            $ marshallBit l . Var l <$> [0 .. fromIntegral size - 1])
-        . replicate (fromIntegral size) $ BitType l
+marshallOut :: Type -> Type -> Expr
+marshallOut t tret = t :\: IT it :->: IOT tret :\: case it of
+    LlvmInt 0 -> V 0 :$: IE (LlvmValue LlvmUnit)
+    LlvmInt 1 -> V 0 :$: marshallBit (V 1)
+    LlvmInt size -> IE $ BindPrim size (V 1 :@: IOT t :$: foldr (:\:)
+        (IE . BitVector $ marshallBit . toV <$> [0..size-1])
+        (fromIntegral size `replicate` BitType)
+        ) tret (V 0)
   where
-    marshallBit :: a -> Expr a -> Expr a
-    marshallBit l' ea = App l' (App l' (TypeApp l' ea . SpecialType l'
-            . InternalType l' $ LlvmInt 1)
-        . InternalExpr l' . LlvmOperand . LLVM.ConstantOperand
-            $ LLVM.Constant.Int 1 1)
-        . InternalExpr l' . LlvmOperand . LLVM.ConstantOperand
-            $ LLVM.Constant.Int 1 0
+    it :: InternalType Type
+    it = toInternalType t
+
+    marshallBit :: Expr -> Expr
+    marshallBit ea = ea :@: IT (LlvmInt 1) :$: IE (LlvmValue $ LlvmOperand
+            $ LLVM.ConstantOperand $ LLVM.Constant.Int 1 1)
+        :$: IE (LlvmValue $ LlvmOperand
+            $ LLVM.ConstantOperand $ LLVM.Constant.Int 1 0)
+
+    toV :: Word32 -> Expr
+    toV = V . fromIntegral
 
 {-|
     Splits a foreign function type into its argument types and its return type,
     failing if the return type isn't in @IO@.
 -}
-splitArrow :: Type a -> ([Type a], Type a)
+splitArrow :: Type -> ([Type], Type)
 splitArrow ta = fromMaybe (error $ "splitArrow: expected IO return type, got: "
     <> showDoc (prettyType0 ta)) $ maybeSplitArrow ta
-
-{-|
-    Splits an Elemental arrow type and converts the argument and return types to
-    LLVM types.
-
-    See also 'splitArrow'.
--}
-arrowToLlvmType :: Type a -> ([LLVM.Type], LLVM.Type)
-arrowToLlvmType = splitArrow >>> fmap toArgumentType *** toReturnType
 
 {-|
     Converts an Elemental type to an LLVM type, failing if the type is not a
     pointer type or if it is unmarshallable.
 -}
-toPointerType :: Type a -> LLVM.Type
+toPointerType :: Type -> LLVM.Type
 toPointerType t = fromMaybe abort $ toMaybePointerType t
   where
     abort :: a
@@ -455,7 +403,7 @@ toPointerType t = fromMaybe abort $ toMaybePointerType t
     Converts an Elemental type to an LLVM type, failing if the type is @void@ or
     unmarshallable.
 -}
-toArgumentType :: Type a -> LLVM.Type
+toArgumentType :: Type -> LLVM.Type
 toArgumentType t = fromMaybe abort $ toMaybeArgumentType t
   where
     abort :: a
@@ -463,13 +411,13 @@ toArgumentType t = fromMaybe abort $ toMaybeArgumentType t
         <> showDoc (prettyType0 t)
 
 -- | Converts an Elemental type to an LLVM return type.
-toReturnType :: Type a -> LLVM.Type
+toReturnType :: Type -> LLVM.Type
 toReturnType t = case toInternalType t of
     LlvmInt 0 -> LLVM.VoidType
     LlvmInt size -> LLVM.IntegerType size
 
 -- | Converts a type to an internal type, failing if the conversion is invalid.
-toInternalType :: Type a -> InternalType a
+toInternalType :: Type -> InternalType Type
 toInternalType t = fromMaybe (error $ "toInternalType: unmarshallable type: "
     <> showDoc (prettyType0 t)) $ toMaybeInternalType t
 

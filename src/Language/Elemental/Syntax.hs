@@ -11,26 +11,42 @@ module Language.Elemental.Syntax
     -- * AST Types
     , Decl(..)
     , DeclName(..)
-    , Expr(..)
-    , Type(..)
+    , AnnExpr
+    , Expr
+    , AnnExprF
+    , ExprF(..)
+    , AnnType
+    , Type
+    , AnnTypeF
+    , TypeF(..)
     , SpecialType(..)
     , PointerKind(..)
     , Name(..)
     , Internal.InternalExpr
     , InternalType
     -- * Pattern Synonyms
-    , pattern (:$)
-    , pattern (:@)
-    , pattern (:\)
-    , pattern (:->)
+    , pattern (:$:)
+    , pattern (:@:)
+    , pattern (:\:)
+    , pattern (:->:)
+    , pattern BitType
     -- * Labelling
     , Labelled(..)
+    , annExpr
+    , stripExpr
+    , annType
+    , stripType
+    , getBiann
+    , getAnn
+    , biextract
+    , extract
     -- * Pretty-printing
     , module Language.Elemental.Syntax.Pretty
     ) where
 
 import Control.Carrier.State.Church (Has, State, StateC, evalState, get, put)
-import Control.Monad (unless, void, when)
+import Control.Monad (unless, when)
+import Data.Fix (foldFix, unFix)
 import Data.Foldable (for_, traverse_)
 import Data.Graph (SCC(..), stronglyConnComp)
 import Data.Map qualified as M
@@ -40,10 +56,10 @@ import Language.Elemental.Diagnostic
 import Language.Elemental.Emit.Internal
 import Language.Elemental.Location
 import Language.Elemental.Primitive
-import Language.Elemental.Syntax.Internal as External hiding
-    (InternalExpr(Emit), Program(Program))
+import Language.Elemental.Syntax.Internal as External hiding (Program(Program))
 import qualified Language.Elemental.Syntax.Internal as Internal
 import Language.Elemental.Syntax.Pretty
+import Language.Elemental.Syntax.Synonyms
 import Language.Elemental.TypeCheck
 
 {-|
@@ -68,8 +84,7 @@ mkProgram l decls = evalHelper $ do
   where
     evalHelper
         :: Applicative m
-        => StateC (M.Map Name (Decl SrcSpan))
-            (StateC (M.Map Name (Type SrcSpan)) m) a
+        => StateC (M.Map Name (Decl SrcSpan)) (StateC (M.Map Name Type) m) a
         -> m a
     evalHelper = evalState M.empty . evalState M.empty
 
@@ -99,8 +114,9 @@ mkProgram l decls = evalHelper $ do
         ForeignExport {} -> pure ()
         ForeignPrimitive l' (DeclName _ name) t -> case primitives M.!? name of
             Nothing -> raise (SourceSpan l') $ InvalidPrimitive name
-            Just (t', _) -> if void t ~=~ t' then pure ()
-                else raise (SourceSpan l') $ PrimitiveTypeMismatch name t' t
+            Just (t', _) -> if stripType t ~=~ t' then pure ()
+                else raise (SourceSpan l')
+                    $ PrimitiveTypeMismatch name t' (stripType t)
         ForeignAddress {} -> pure ()
 
     checkForeignTypes :: Has Diagnosis sig m => Decl SrcSpan -> m ()
@@ -109,24 +125,25 @@ mkProgram l decls = evalHelper $ do
         ForeignImport _ _ _ t -> checkType t
         ForeignExport _ _ _ t-> checkType t
         ForeignPrimitive {} -> pure ()
-        ForeignAddress _ _ _ t -> case toMaybePointerType t of
-            Nothing -> raise (SourceSpan $ getLabel t)
-                $ IllegalForeignAddressType t
+        ForeignAddress _ _ _ t -> case toMaybePointerType $ stripType t of
+            Nothing -> raise (SourceSpan . getAnn $ unFix t)
+                $ IllegalForeignAddressType (stripType t)
             Just _ -> pure ()
 
-    checkType :: Has Diagnosis sig m => Type SrcSpan -> m ()
-    checkType t = case maybeSplitArrow t of
-        Nothing -> raise (SourceSpan $ getLabel t) $ NonIOForeignType t
+    checkType :: Has Diagnosis sig m => AnnType SrcSpan -> m ()
+    checkType t = case maybeSplitArrowA t of
+        Nothing -> raise (SourceSpan . getAnn $ unFix t)
+            $ NonIOForeignType (stripType t)
         Just (targs, tret) -> traverse_ checkArgumentType targs
-            >> case toMaybeInternalType tret of
-                Nothing -> raise (SourceSpan $ getLabel tret)
-                    $ UnmarshallableForeignType tret
+            >> case toMaybeInternalType $ stripType tret of
+                Nothing -> raise (SourceSpan . getAnn $ unFix tret)
+                    $ UnmarshallableForeignType (stripType tret)
                 Just _ -> pure ()
 
-    checkArgumentType :: Has Diagnosis sig m => Type SrcSpan -> m ()
-    checkArgumentType targ = case toMaybeArgumentType targ of
-        Nothing -> raise (SourceSpan $ getLabel targ)
-            $ UnmarshallableForeignType targ
+    checkArgumentType :: Has Diagnosis sig m => AnnType SrcSpan -> m ()
+    checkArgumentType targ = case toMaybeArgumentType $ stripType targ of
+        Nothing -> raise (SourceSpan . getAnn $ unFix targ)
+            $ UnmarshallableForeignType (stripType targ)
         Just _ -> pure ()
 
     getAcyclic
@@ -156,47 +173,32 @@ mkProgram l decls = evalHelper $ do
 
     checkExpr
         :: (Has Diagnosis sig m, Has (State (M.Map Name (Decl SrcSpan))) sig m)
-        => Expr SrcSpan -> m ()
+        => AnnExpr SrcSpan -> m ()
     checkExpr expr = (checkVars 0 0 expr >>) . for_ (getReferences expr)
         $ \(l', name) -> do
             scope <- get @(M.Map Name (Decl SrcSpan))
             unless (M.member name scope)
                 $ raise (SourceSpan l') $ UndefinedRef name
 
-    checkVars :: Has Diagnosis sig m => Int -> Int -> Expr SrcSpan -> m ()
-    checkVars idx tidx ea = case ea of
-        Ref {} -> pure ()
-        Var l' idx' -> unless (idx > idx')
-            $ raise (SourceSpan l') $ IllegalFreeVar idx idx'
-        App _ ef ex -> checkVars idx tidx ef >> checkVars idx tidx ex
-        TypeApp _ ef t -> checkVars idx tidx ef >> checkTypeVars tidx t
-        Lam _ t ex -> checkTypeVars tidx t >> checkVars (idx + 1) tidx ex
-        TypeLam _ ex -> checkVars idx (tidx + 1) ex
-        InternalExpr _ iex -> case iex of
-            Unit {} -> pure ()
-            PureIO {} -> pure ()
-            BindIO {} -> pure ()
-            PurePrim {} -> pure ()
-            BindPrim {} -> pure ()
-            BitVector es -> traverse_ (checkVars idx tidx) es
-            Call {} -> pure ()
-            IsolateBit {} -> pure ()
-            TestBit -> pure ()
-            LoadPointer -> pure ()
-            StorePointer -> pure ()
-            StorePrim {} -> pure ()
-            LlvmOperand {} -> pure ()
-            -- Let's pretend this doesn't contain an expression.
-            -- This is fine when frontends and parsers don't misbehave.
-            Internal.Emit _ -> pure ()
+    checkVars :: Has Diagnosis sig m => Int -> Int -> AnnExpr SrcSpan -> m ()
+    checkVars sidx stidx = (.) ($ stidx) . (.) ($ sidx) . foldFix
+        $ \ea idx tidx -> case biextract ea of
+            Ref {} -> pure ()
+            Var idx' -> unless (idx > idx')
+                $ raise (SourceSpan $ getBiann ea) $ IllegalFreeVar idx idx'
+            App ef ex -> ef idx tidx >> ex idx tidx
+            TypeApp ef t -> ef idx tidx >> checkTypeVars tidx t
+            Lam t ex -> checkTypeVars tidx t >> ex (idx + 1) tidx
+            TypeLam ex -> ex idx (tidx + 1)
+            InternalExpr {} -> pure ()
 
-    checkTypeVars :: Has Diagnosis sig m => Int -> Type SrcSpan -> m ()
-    checkTypeVars tidx ta = case ta of
-        Arrow _ tx ty -> checkTypeVars tidx tx >> checkTypeVars tidx ty
-        Forall _ tx -> checkTypeVars (tidx + 1) tx
-        TypeVar l' tidx' -> unless (tidx > tidx')
-            $ raise (SourceSpan l') $ IllegalFreeTypeVar tidx tidx'
-        SpecialType _ st -> case st of
-            IOType _ tx -> checkTypeVars tidx tx
-            PointerType _ _ tx -> checkTypeVars tidx tx
+    checkTypeVars :: Has Diagnosis sig m => Int -> AnnType SrcSpan -> m ()
+    checkTypeVars sidx = (.) ($ sidx) . foldFix $ \ta tidx -> case extract ta of
+        Arrow tx ty -> tx tidx >> ty tidx
+        Forall tx -> tx $ tidx + 1
+        TypeVar tidx' -> unless (tidx > tidx')
+            $ raise (SourceSpan $ getAnn ta) $ IllegalFreeTypeVar tidx tidx'
+        SpecialType st -> case st of
+            IOType tx -> tx tidx
+            PointerType _ tx -> tx tidx
             InternalType {} -> pure ()

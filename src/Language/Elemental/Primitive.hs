@@ -9,37 +9,29 @@ module Language.Elemental.Primitive
 import Data.Map qualified as M
 
 import Language.Elemental.Syntax.Internal
+import Language.Elemental.Syntax.Synonyms
 
 
 {-|
     All primitives indexed by name.
     The expression is the corresponding internal expression for the primitive.
 -}
-primitives :: M.Map Name (Type (), Expr ())
+primitives :: M.Map Name (Type, Expr)
 primitives = M.fromList
     [ ("pureIO",
-        ( Forall () . Arrow () (TypeVar () 0)
-            . SpecialType () . IOType () $ TypeVar () 0
-        , InternalExpr () PureIO
+        ( FA $ TV 0 :->: IOT (TV 0)
+        , IE PureIO
         ))
     , ("bindIO",
-        ( Forall () . Arrow () (SpecialType () . IOType () $ TypeVar () 0)
-            . Forall () . Arrow () (Arrow () (TypeVar () 1)
-            . SpecialType () . IOType () $ TypeVar () 0)
-            . SpecialType () . IOType () $ TypeVar () 0
-        , InternalExpr () BindIO
+        ( FA $ IOT (TV 0) :->: FA ((TV 1 :->: IOT (TV 0)) :->: IOT (TV 0))
+        , IE BindIO
         ))
     , ("loadPointer",
-        ( Forall () $ Arrow ()
-            (SpecialType () . PointerType () ReadPointer $ TypeVar () 0)
-            (SpecialType () . IOType () $ TypeVar () 0)
-        , InternalExpr () LoadPointer
+        ( FA $ PtrT ReadPointer (TV 0) :->: IOT (TV 0)
+        , IE LoadPointer
         ))
     , ("storePointer",
-        ( Forall () . Arrow ()
-            (SpecialType () . PointerType () WritePointer $ TypeVar () 0)
-            . Arrow () (TypeVar () 0) . SpecialType () . IOType () . Forall ()
-                $ Arrow () (TypeVar () 0) (TypeVar () 0)
-        , InternalExpr () StorePointer
+        ( FA $ PtrT WritePointer (TV 0) :->: TV 0 :->: IOT (FA $ TV 0 :->: TV 0)
+        , IE StorePointer
         ))
     ]

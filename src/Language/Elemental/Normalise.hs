@@ -8,8 +8,7 @@
 -- | Functions for normalising programs.
 module Language.Elemental.Normalise
     ( normaliseProgram
-    , normaliseExpr
-    , rewriteExpr
+    , normRules
     , inlineRefs
     , substituteExpr
     , substituteTypeInExpr
@@ -19,9 +18,9 @@ module Language.Elemental.Normalise
     , incrementType
     ) where
 
-import Control.Carrier.State.Church (StateC(StateC), get, modify, runState)
-import Control.Effect.Choose (Choose, (<|>))
-import Control.Effect.Empty (Empty, Has, empty)
+import Control.Carrier.State.Church (Has, StateC, get, modify, runState)
+import Data.Fix (Fix(Fix), foldFix)
+import Data.IntMap qualified as IM
 import Data.Map qualified as M
 import Data.Maybe (fromMaybe)
 
@@ -31,26 +30,26 @@ import Language.Elemental.Syntax.Internal
 
 -- | Replaces all defined references and normalises all expressions.
 normaliseProgram
-    :: forall a sig m. Has (Rewriter (Expr a)) sig m
-    => (Expr a -> m (Expr a)) -> Program a -> m (Program a)
-normaliseProgram normExpr (Program l decls) = runState (const pure) defaults
+    :: forall a sig m. Has (Birewriter ExprF TypeF) sig m
+    => [Birule ExprF TypeF] -> Program a -> m (Program a)
+normaliseProgram rules (Program l decls) = runState (const pure) defaults
     $ Program l . filter isForeign <$> traverse normaliseDecl decls
   where
-    defaults :: M.Map Name (Expr a)
+    defaults :: M.Map Name Expr
     defaults = M.empty
 
-    normaliseDecl :: Decl a -> StateC (M.Map Name (Expr a)) m (Decl a)
+    normaliseDecl :: Decl a -> StateC (M.Map Name Expr) m (Decl a)
     normaliseDecl decl = case decl of
         Binding l' dname@(DeclName _ name) expr -> do
             scope <- get
-            nex <- lift . normExpr $ inlineRefs scope expr
+            nex <- birewriteM rules . inlineRefs scope $ stripExpr expr
             modify $ M.insert name nex
-            pure $ Binding l' dname nex
+            pure $ Binding l' dname $ annExpr l' nex
         ForeignImport {} -> pure decl
         ForeignExport l' foreignName expr t -> do
             scope <- get
-            nex <- lift . normExpr $ inlineRefs scope expr
-            pure $ ForeignExport l' foreignName nex t
+            nex <- birewriteM rules . inlineRefs scope $ stripExpr expr
+            pure $ ForeignExport l' foreignName (annExpr l' nex) t
         ForeignPrimitive {} -> pure decl
         ForeignAddress {} -> pure decl
 
@@ -62,233 +61,142 @@ normaliseProgram normExpr (Program l decls) = runState (const pure) defaults
         ForeignPrimitive {} -> True
         ForeignAddress {} -> True
 
-    lift :: m r -> StateC s m r
-    lift m = StateC $ \k s -> m >>= k s
-{-# INLINABLE normaliseProgram #-}
-
--- | Normalises an expression.
-normaliseExpr :: Has (Rewriter (Expr a)) sig m => Expr a -> m (Expr a)
-normaliseExpr = beginRewrite $ rewriteExpr $ const empty
-{-# INLINABLE normaliseExpr #-}
-
--- | Attempts to perform a single rewrite step.
-rewriteExpr
-    :: forall a sig m. (Has Choose sig m, Has Empty sig m)
-    => (Expr a -> m (Expr a))
-    -- ^ Extra rules to try before rewriting deeper but after all other rules.
-    -> Expr a -> m (Expr a)
-rewriteExpr rewriteExtra = rewrite
+-- | Rewrite rules for normalising expressions.
+normRules :: [Birule ExprF TypeF]
+normRules =
+    -- App/Lam β-reduction
+    [ Fix (Bimatch $ App
+        (Fix . Bimatch . Lam (Fix . Some . const $ pure mempty)
+            . Fix . Bisome $ pure . IM.singleton 0)
+        (Fix $ Bisome $ pure . IM.singleton 1)
+        ) :=> Fix (Bidynamic $ \s -> substituteExpr 0 (s ! 1) (s ! 0))
+    -- TypeApp/TypeLam β-reduction
+    , Fix (Bimatch $ TypeApp
+        (Fix . Bimatch . TypeLam . Fix . Bisome $ pure . pt . IM.singleton 0)
+        (Fix . Some $ pure . pe . IM.singleton 0)
+        ) :=> Fix
+            (Bidynamic $ \s -> substituteTypeInExpr 0 (snd s ! 0) (fst s ! 0))
+    ]
   where
-    rewrite :: Expr a -> m (Expr a)
-    rewrite ex = rewritePure ex <|> rewriteExtra ex <|> rewriteInner ex
+    pt :: Monoid b => a -> (a, b)
+    pt x = (x, mempty)
 
-    {-
-        These rules must run last to avoid over-aggressively lifting 'Emit' out,
-        as that interferes with the LLVM code generation. By running other
-        rewrite rules first, other rules could eliminate the 'Emit' expression
-        completely. For example, if a program discards an @IO@ value, then the
-        last thing we want is to still emit its LLVM.
-    -}
-    rewriteInner :: Expr a -> m (Expr a)
-    rewriteInner ea = case ea of
-        Ref {} -> empty
-        Var {} -> empty
-        App l ef ex -> flip (App l) ex <$> rewrite ef
-            <|> App l ef <$> rewrite ex
-        TypeApp l ef t -> flip (TypeApp l) t <$> rewrite ef
-        Lam l t ex -> Lam l t <$> rewrite ex
-        TypeLam l ex -> TypeLam l <$> rewrite ex
-        InternalExpr l iex -> InternalExpr l <$> case iex of
-            Unit {} -> empty
-            PureIO {} -> empty
-            BindIO {} -> empty
-            PurePrim {} -> empty
-            BindPrim {} -> empty
-            BitVector es -> BitVector <$> rewriteAny rewrite es
-            Call {} -> empty
-            IsolateBit {} -> empty
-            TestBit -> empty
-            LoadPointer -> empty
-            StorePointer -> empty
-            StorePrim {} -> empty
-            LlvmOperand {} -> empty
-            {-
-                We can't conditionally rewrite Emit due to the monad, so we
-                don't normalise it here.
-            -}
-            Emit {} -> empty
-
-    rewritePure :: Expr a -> m (Expr a)
-    rewritePure ea = case ea of
-        (_ :\ ex) :$ ey -> pure $ substituteExpr 0 ey ex
-        TypeLam _ ex :@ t -> pure $ substituteTypeInExpr 0 t ex
-        _ -> empty
-{-# INLINABLE rewriteExpr #-}
+    pe :: Monoid b => a -> (b, a)
+    pe x = (mempty, x)
 
 {-|
-    Inlines references following the given mapping. If a referenced name cannot
+    Inlines references following the given mapping. If a referenced name cFixot
     be found in the mapping, then it will be left untouched.
     This assumes that the inlined expressions do not contain any free variables.
 -}
-inlineRefs :: M.Map Name (Expr a) -> Expr a -> Expr a
-inlineRefs scope expr = case expr of
-    Ref _ ref -> fromMaybe expr $ scope M.!? ref
-    Var {} -> expr
-    App l ef ex -> App l (inlineRefs scope ef) (inlineRefs scope ex)
-    TypeApp l ef t -> TypeApp l (inlineRefs scope ef) t
-    Lam l t ex -> Lam l t (inlineRefs scope ex)
-    TypeLam l ex -> TypeLam l (inlineRefs scope ex)
-    InternalExpr {} -> expr
+inlineRefs :: M.Map Name Expr -> Expr -> Expr
+inlineRefs scope = foldFix $ \ea -> case ea of
+    Ref ref -> fromMaybe (Fix ea) $ scope M.!? ref
+    Var {} -> Fix ea
+    App ef ex -> Fix $ App ef ex
+    TypeApp ef t -> Fix $ TypeApp ef t
+    Lam t ex -> Fix $ Lam t ex
+    TypeLam ex -> Fix $ TypeLam ex
+    InternalExpr {} -> Fix ea
 
 {-|
     Substitutes the first given expression with the given de Bruijn index into
     the second given expression.
 -}
-substituteExpr :: Int -> Expr a -> Expr a -> Expr a
-substituteExpr idx ea eb = case eb of
-    Ref {} -> eb
-    Var l idx' -> case compare idx' idx of
-        LT -> Var l idx'
-        EQ -> ea
-        GT -> Var l (idx' - 1)
-    App l ef ex -> App l (substituteExpr idx ea ef) (substituteExpr idx ea ex)
-    TypeApp l ef t -> TypeApp l (substituteExpr idx ea ef) t
-    Lam l t ex -> Lam l t (substituteExpr (idx + 1) (incrementExpr 0 ea) ex)
-    TypeLam l ex -> TypeLam l (substituteExpr idx ea ex)
-    InternalExpr l iex -> InternalExpr l $ case iex of
-        Unit {} -> iex
-        PureIO {} -> iex
-        BindIO {} -> iex
-        PurePrim {} -> iex
-        BindPrim {} -> iex
-        BitVector es -> BitVector $ substituteExpr idx ea <$> es
-        Call {} -> iex
-        IsolateBit {} -> iex
-        TestBit -> iex
-        LoadPointer -> iex
-        StorePointer -> iex
-        StorePrim {} -> iex
-        LlvmOperand {} -> iex
-        Emit mex -> Emit $ substituteExpr idx ea <$> mex
+substituteExpr :: Int -> Expr -> Expr -> Expr
+substituteExpr sidx sea = ($ sea) . ($ sidx) . foldFix subsF
+  where
+    subsF :: ExprF Type (Int -> Expr -> Expr) -> Int -> Expr -> Expr
+    subsF eb idx ea = case eb of
+        Ref ref -> Fix $ Ref ref
+        Var idx' -> case compare idx' idx of
+            LT -> Fix $ Var idx'
+            EQ -> ea
+            GT -> Fix $ Var (idx' - 1)
+        App ef ex -> Fix $ App (ef idx ea) (ex idx ea)
+        TypeApp ef t -> Fix $ TypeApp (ef idx ea) t
+        Lam t ex -> Fix . Lam t $ ex (idx + 1) (incrementExpr 0 ea)
+        TypeLam ex -> Fix . TypeLam $ ex idx ea
+        InternalExpr iex -> Fix . InternalExpr $ ($ ea) . ($ idx) <$> iex
 
 {-|
     Substitutes the given type with the given de Bruijn index into the given
     expression.
 -}
-substituteTypeInExpr :: Int -> Type a -> Expr a -> Expr a
-substituteTypeInExpr idx ta eb = case eb of
-    Ref {} -> eb
-    Var {} -> eb
-    App l ef ex -> App l (substituteTypeInExpr idx ta ef)
-        (substituteTypeInExpr idx ta ex)
-    TypeApp l ef t
-        -> TypeApp l (substituteTypeInExpr idx ta ef) (substituteType idx ta t)
-    Lam l t ex
-        -> Lam l (substituteType idx ta t) (substituteTypeInExpr idx ta ex)
-    TypeLam l ex
-        -> TypeLam l (substituteTypeInExpr (idx + 1) (incrementType 0 ta) ex)
-    InternalExpr l iex -> InternalExpr l $ case iex of
-        Unit {} -> iex
-        PureIO {} -> iex
-        BindIO {} -> iex
-        PurePrim {} -> iex
-        BindPrim {} -> iex
-        BitVector es -> BitVector $ substituteTypeInExpr idx ta <$> es
-        Call {} -> iex
-        IsolateBit {} -> iex
-        TestBit -> iex
-        LoadPointer -> iex
-        StorePointer -> iex
-        StorePrim {} -> iex
-        LlvmOperand {} -> iex
-        Emit mex -> Emit $ substituteTypeInExpr idx ta <$> mex
+substituteTypeInExpr :: Int -> Type -> Expr -> Expr
+substituteTypeInExpr sidx sta = ($ sta) . ($ sidx) . foldFix subsF
+  where
+    subsF :: ExprF Type (Int -> Type -> Expr) -> Int -> Type -> Expr
+    subsF ea idx ta = case ea of
+        Ref ref -> Fix $ Ref ref
+        Var idx' -> Fix $ Var idx'
+        App ef ex -> Fix $ App (ef idx ta) (ex idx ta)
+        TypeApp ef t -> Fix $ TypeApp (ef idx ta) (substituteType idx ta t)
+        Lam t ex -> Fix . Lam (substituteType idx ta t) $ ex idx ta
+        TypeLam ex -> Fix . TypeLam $ ex (idx + 1) (incrementType 0 ta)
+        InternalExpr iex -> Fix . InternalExpr $ ($ ta) . ($ idx) <$> iex
 
 {-|
     Substitutes the first given type with the given de Bruijn index into the
     second given type.
 -}
-substituteType :: Int -> Type a -> Type a -> Type a
-substituteType idx ta tb = case tb of
-    Arrow l tx ty
-        -> Arrow l (substituteType idx ta tx) (substituteType idx ta ty)
-    Forall l tx -> Forall l (substituteType (idx + 1) (incrementType 0 ta) tx)
-    TypeVar l idx' -> case compare idx' idx of
-        LT -> TypeVar l idx'
-        EQ -> ta
-        GT -> TypeVar l (idx' - 1)
-    SpecialType l st -> SpecialType l $ case st of
-        IOType l' tx -> IOType l' (substituteType idx ta tx)
-        PointerType l' pk tx -> PointerType l' pk (substituteType idx ta tx)
-        InternalType {} -> st
+substituteType :: Int -> Type -> Type -> Type
+substituteType sidx sta = ($ sta) . ($ sidx) . foldFix subsF
+  where
+    subsF :: TypeF (Int -> Type -> Type) -> Int -> Type -> Type
+    subsF tb idx ta = case tb of
+        Arrow tx ty -> Fix $ Arrow (tx idx ta) (ty idx ta)
+        Forall tx -> Fix . Forall $ tx (idx + 1) (incrementType 0 ta)
+        TypeVar idx' -> case compare idx' idx of
+            LT -> Fix $ TypeVar idx'
+            EQ -> ta
+            GT -> Fix . TypeVar $ idx' - 1
+        SpecialType st -> Fix . SpecialType $ ($ ta) . ($ idx) <$> st
 
 {-|
     Increments every 'Var' de Bruijn index greater than or equal to the given
     index.
 -}
-incrementExpr :: Int -> Expr a -> Expr a
-incrementExpr idx ea = case ea of
-    Ref {} -> ea
-    Var l idx' -> Var l (if idx' >= idx then idx' + 1 else idx')
-    App l ef ex -> App l (incrementExpr idx ef) (incrementExpr idx ex)
-    TypeApp l ef t -> TypeApp l (incrementExpr idx ef) t
-    Lam l t ex -> Lam l t (incrementExpr (idx + 1) ex)
-    TypeLam l ex -> TypeLam l (incrementExpr idx ex)
-    InternalExpr l iexpr -> InternalExpr l $ case iexpr of
-        Unit {} -> iexpr
-        PureIO {} -> iexpr
-        BindIO {} -> iexpr
-        PurePrim {} -> iexpr
-        BindPrim {} -> iexpr
-        BitVector es -> BitVector $ incrementExpr idx <$> es
-        Call {} -> iexpr
-        IsolateBit {} -> iexpr
-        TestBit -> iexpr
-        LoadPointer -> iexpr
-        StorePointer -> iexpr
-        StorePrim {} -> iexpr
-        LlvmOperand {} -> iexpr
-        Emit mex -> Emit $ incrementExpr idx <$> mex
+incrementExpr :: Int -> Expr -> Expr
+incrementExpr sidx = ($ sidx) . foldFix incF
+  where
+    incF :: ExprF Type (Int -> Expr) -> Int -> Expr
+    incF ea idx = case ea of
+        Ref ref -> Fix $ Ref ref
+        Var idx' -> Fix . Var $ if idx' >= idx then idx' + 1 else idx'
+        App ef ex -> Fix $ App (ef idx) (ex idx)
+        TypeApp ef t -> Fix $ TypeApp (ef idx) t
+        Lam t ex -> Fix . Lam t $ ex (idx + 1)
+        TypeLam ex -> Fix . TypeLam $ ex idx
+        InternalExpr iex -> Fix . InternalExpr $ ($ idx) <$> iex
 
 {-|
     Increments every 'TypeVar' de Bruijn index greater than or equal to the
     given index.
 -}
-incrementTypeInExpr :: Int -> Expr a -> Expr a
-incrementTypeInExpr idx ea = case ea of
-    Ref {} -> ea
-    Var {} -> ea
-    App l ef ex
-        -> App l (incrementTypeInExpr idx ef) (incrementTypeInExpr idx ex)
-    TypeApp l ef t
-        -> TypeApp l (incrementTypeInExpr idx ef) (incrementType idx t)
-    Lam l t ex -> Lam l (incrementType idx t) (incrementTypeInExpr idx ex)
-    TypeLam l ex -> TypeLam l (incrementTypeInExpr (idx + 1) ex)
-    InternalExpr l iexpr -> InternalExpr l $ case iexpr of
-        Unit {} -> iexpr
-        PureIO {} -> iexpr
-        BindIO {} -> iexpr
-        PurePrim {} -> iexpr
-        BindPrim {} -> iexpr
-        BitVector es -> BitVector $ incrementTypeInExpr idx <$> es
-        Call {} -> iexpr
-        IsolateBit {} -> iexpr
-        TestBit -> iexpr
-        LoadPointer -> iexpr
-        StorePointer -> iexpr
-        StorePrim {} -> iexpr
-        LlvmOperand {} -> iexpr
-        Emit mex -> Emit $ incrementTypeInExpr idx <$> mex
+incrementTypeInExpr :: Int -> Expr -> Expr
+incrementTypeInExpr sidx = ($ sidx) . foldFix incF
+  where
+    incF :: ExprF Type (Int -> Expr) -> Int -> Expr
+    incF ea idx = case ea of
+        Ref ref -> Fix $ Ref ref
+        Var idx' -> Fix $ Var idx'
+        App ef ex -> Fix $ App (ef idx) (ex idx)
+        TypeApp ef t -> Fix $ TypeApp (ef idx) (incrementType idx t)
+        Lam t ex -> Fix . Lam (incrementType idx t) $ ex idx
+        TypeLam ex -> Fix . TypeLam $ ex (idx + 1)
+        InternalExpr iex -> Fix . InternalExpr $ ($ idx) <$> iex
 
 {-|
     Increments every 'TypeVar' de Bruijn index greater than or equal to the
     given index.
 -}
-incrementType :: Int -> Type a -> Type a
-incrementType idx ta = case ta of
-    Arrow l tx ty -> Arrow l (incrementType idx tx) (incrementType idx ty)
-    Forall l tx -> Forall l (incrementType (idx + 1) tx)
-    TypeVar l idx' -> TypeVar l (if idx' >= idx then idx' + 1 else idx')
-    SpecialType l st -> SpecialType l $ case st of
-        IOType l' tx -> IOType l' (incrementType idx tx)
-        PointerType l' pk tx -> PointerType l' pk (incrementType idx tx)
-        InternalType {} -> st
+incrementType :: Int -> Type -> Type
+incrementType sidx = ($ sidx) . foldFix incF
+  where
+    incF :: TypeF (Int -> Type) -> Int -> Type
+    incF ta idx = case ta of
+        Arrow tx ty -> Fix $ Arrow (tx idx) (ty idx)
+        Forall tx -> Fix . Forall $ tx (idx + 1)
+        TypeVar idx' -> Fix . TypeVar $ if idx' >= idx then idx' + 1 else idx'
+        SpecialType st -> Fix . SpecialType $ ($ idx) <$> st

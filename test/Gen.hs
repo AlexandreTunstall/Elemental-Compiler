@@ -2,41 +2,55 @@
 
 module Gen where
 
+import Control.Monad (unless)
+import Data.Fix (Fix(Fix), unFix)
 import Data.Text.Short qualified as TS
-import Hedgehog (MonadGen)
+import Hedgehog (Gen, MonadGen, MonadTest, PropertyT, failure, forAllWith)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import Prettyprinter
+    ( Doc
+    , PageWidth(Unbounded)
+    , defaultLayoutOptions
+    , group
+    , layoutPageWidth
+    , layoutPretty
+    )
+import Prettyprinter.Render.String (renderString)
 
 import Language.Elemental
 
 
-genSubexpr :: MonadGen m => Expr a -> m (Expr a)
-genSubexpr ea = case ea of
+genSubexpr :: MonadGen m => AnnExpr a -> m (AnnExpr a)
+genSubexpr ea = case biextract $ unFix ea of
     Ref {} -> pure ea
     Var {} -> pure ea
-    App _ ef ex -> Gen.choice [genSubexpr ef, genSubexpr ex, pure ea]
-    TypeApp _ ef _ -> Gen.choice [genSubexpr ef, pure ea]
-    Lam _ _ ey -> Gen.choice [genSubexpr ey, pure ea]
-    TypeLam _ ex -> Gen.choice [genSubexpr ex, pure ea]
+    App ef ex -> Gen.choice [genSubexpr ef, genSubexpr ex, pure ea]
+    TypeApp ef _ -> Gen.choice [genSubexpr ef, pure ea]
+    Lam _ ey -> Gen.choice [genSubexpr ey, pure ea]
+    TypeLam ex -> Gen.choice [genSubexpr ex, pure ea]
     InternalExpr {} -> pure ea
 
-genSubtype :: MonadGen m => Type a -> m (Type a)
-genSubtype ta = case ta of
-    Arrow _ tx ty -> Gen.choice [genSubtype tx, genSubtype ty, pure ta]
-    Forall _ tx -> Gen.choice [genSubtype tx, pure ta]
+genSubtype :: MonadGen m => AnnType a -> m (AnnType a)
+genSubtype ta = case extract $ unFix ta of
+    Arrow tx ty -> Gen.choice [genSubtype tx, genSubtype ty, pure ta]
+    Forall tx -> Gen.choice [genSubtype tx, pure ta]
     TypeVar {} -> pure ta
-    SpecialType _ stx -> case stx of
-        IOType _ tx -> Gen.choice [genSubtype tx, pure ta]
-        PointerType _ _ tx -> Gen.choice [genSubtype tx, pure ta]
+    SpecialType stx -> case stx of
+        IOType tx -> Gen.choice [genSubtype tx, pure ta]
+        PointerType _ tx -> Gen.choice [genSubtype tx, pure ta]
         InternalType {} -> pure ta
 
 genDecl :: MonadGen m => Int -> m (Decl ())
 genDecl n = Gen.choice
-    [ Binding () <$> genDeclName <*> genExpr 0 0 n
-    , ForeignImport () <$> genDeclName <*> genForeignName <*> genType 0 n
-    , ForeignExport () <$> genForeignName <*> genExpr 0 0 n <*> genType 0 n
-    , ForeignPrimitive () <$> genDeclName <*> genType 0 n
-    , ForeignAddress () <$> genDeclName <*> genAddr <*> genType 0 n
+    [ Binding () <$> genDeclName <*> (annExpr () <$> genExpr 0 0 n)
+    , ForeignImport () <$> genDeclName <*> genForeignName
+        <*> (annType () <$> genType 0 n)
+    , ForeignExport () <$> genForeignName
+        <*> (annExpr () <$> genExpr 0 0 n) <*> (annType () <$> genType 0 n)
+    , ForeignPrimitive () <$> genDeclName <*> (annType () <$> genType 0 n)
+    , ForeignAddress () <$> genDeclName <*> genAddr
+        <*> (annType () <$> genType 0 n)
     ]
   where
     genAddr :: MonadGen m => m Integer
@@ -45,37 +59,37 @@ genDecl n = Gen.choice
 genDeclName :: MonadGen m => m (DeclName ())
 genDeclName = DeclName () <$> genName
 
-genExpr :: MonadGen m => Int -> Int -> Int -> m (Expr ())
+genExpr :: MonadGen m => Int -> Int -> Int -> m Expr
 genExpr idx tidx n = case n of
-    0 -> Gen.choice $ withVar [Lam () <$> genType tidx n <*> pure (Var () 0)]
+    0 -> Gen.choice $ withVar [(:\:) <$> genType tidx n <*> pure (Fix $ Var 0)]
     _ -> Gen.choice $ withVar
-        [ App () <$> genExpr idx tidx (n - 1) <*> genExpr idx tidx (n - 1)
-        , TypeApp () <$> genExpr idx tidx (n - 1) <*> genType tidx (n - 1)
-        , Lam () <$> genType tidx (n - 1) <*> genExpr (idx + 1) tidx (n - 1)
-        , TypeLam () <$> genExpr idx (tidx + 1) (n - 1)
+        [ (:$:) <$> genExpr idx tidx (n - 1) <*> genExpr idx tidx (n - 1)
+        , (:@:) <$> genExpr idx tidx (n - 1) <*> genType tidx (n - 1)
+        , (:\:) <$> genType tidx (n - 1) <*> genExpr (idx + 1) tidx (n - 1)
+        , Fix . TypeLam <$> genExpr idx (tidx + 1) (n - 1)
         ]
   where
-    withVar :: MonadGen m => [m (Expr ())] -> [m (Expr ())]
+    withVar :: MonadGen m => [m Expr] -> [m Expr]
     withVar = case idx of
         0 -> id
-        _ -> (:) $ Var () <$> Gen.integral (Range.constant 0 $ idx - 1)
+        _ -> (:) $ Fix . Var <$> Gen.integral (Range.constant 0 $ idx - 1)
 
-genType :: MonadGen m => Int -> Int -> m (Type ())
+genType :: MonadGen m => Int -> Int -> m Type
 genType tidx n = case n of
-    0 -> Gen.choice $ withVar [pure . Forall () $ TypeVar () 0]
+    0 -> Gen.choice $ withVar [pure . Fix . Forall . Fix $ TypeVar 0]
     _ -> Gen.choice $ withVar
-        [ SpecialType () <$> Gen.choice
-            [ IOType () <$> genType tidx (n - 1)
-            , PointerType () <$> genPtrKind <*> genType tidx (n - 1)
+        [ Fix . SpecialType <$> Gen.choice
+            [ IOType <$> genType tidx (n - 1)
+            , PointerType <$> genPtrKind <*> genType tidx (n - 1)
             ]
-        , Arrow () <$> genType tidx (n - 1) <*> genType tidx (n - 1)
-        , Forall () <$> genType (tidx + 1) (n - 1)
+        , (:->:) <$> genType tidx (n - 1) <*> genType tidx (n - 1)
+        , Fix . Forall <$> genType (tidx + 1) (n - 1)
         ]
   where
-    withVar :: MonadGen m => [m (Type ())] -> [m (Type ())]
+    withVar :: MonadGen m => [m Type] -> [m Type]
     withVar = case tidx of
         0 -> id
-        _ -> (:) $ TypeVar () <$> Gen.integral (Range.constant 0 $ tidx - 1)
+        _ -> (:) $ Fix . TypeVar <$> Gen.integral (Range.constant 0 $ tidx - 1)
     
     genPtrKind :: MonadGen m => m PointerKind
     genPtrKind = Gen.element [ReadPointer, WritePointer]
@@ -88,3 +102,26 @@ genName = Name . TS.fromText <$> Gen.text (Range.constant 1 10)
 
 genForeignName :: MonadGen m => m TS.ShortText
 genForeignName = TS.fromText <$> Gen.text (Range.constant 1 10) Gen.unicode
+
+forAllPretty :: (Pretty a, Monad m) => Gen a -> PropertyT m a
+forAllPretty = forAllWith $ showDoc . pretty
+
+(===) :: (Eq a, MonadTest m) => a -> a -> m ()
+x === y = unless (x == y) failure
+
+tripping
+    :: (Eq (f a), Applicative f, MonadTest m)
+    => a -> (a -> b) -> (b -> f a) -> m ()
+tripping x enc dec = if pure x == my then pure () else failure
+  where
+    i = enc x
+    my = dec i
+
+-- | Renders a Doc without line breaks
+showDoc :: Doc ann -> String
+showDoc = renderString . layoutPretty layoutOpts . group
+    where
+    layoutOpts = defaultLayoutOptions
+        { layoutPageWidth = Unbounded
+        }
+

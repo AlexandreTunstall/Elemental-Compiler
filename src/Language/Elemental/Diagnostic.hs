@@ -59,33 +59,32 @@ data Diagnostic
     | InvalidPrimitive Name
     -- | The primitive has a different type to the declared type.
     | PrimitiveTypeMismatch Name
-        (Type ())
+        Type
         {-^ Expected -}
-        (Type SrcSpan)
+        Type
         {-^ Actual -}
     -- | The declared foreign type does not have an @IO@ return type.
-    | NonIOForeignType (Type SrcSpan)
+    | NonIOForeignType Type
     -- | The declared foreign type is not a legal marshallable type.
-    | UnmarshallableForeignType (Type SrcSpan)
+    | UnmarshallableForeignType Type
     -- | The declared foreign address is not a marshallable pointer type.
-    | IllegalForeignAddressType (Type SrcSpan)
+    | IllegalForeignAddressType Type
     -- | The declared type does not match the type of the expression.
     | TypeMismatch
-        (Type SrcSpan)
+        Type
         {-^ Expected -}
-        (Type SrcSpan)
+        Type
         {-^ Actual -}
     -- | Application on a non-function type.
     | TypeExpectedArrow
-        (Type SrcSpan)
+        Type
         {-^ The type of the function argument. -}
-        (Type SrcSpan)
+        Type
         {-^ The actual type of the LHS. -}
     -- | Type application on a non-universally quantified type.
     | TypeExpectedForall
-        (Type SrcSpan)
+        Type
         {-^ The actual type of the LHS. -}
-    deriving stock (Show)
 
 instance Pretty Diagnostic where
     pretty diag = case diag of
@@ -119,7 +118,7 @@ instance Pretty Diagnostic where
         UnmarshallableForeignType t -> "Unmarshallable type:"
             <+> group (prettyType0 t) <> "." <> line
             <> "Foreign imports and exports must have a marshallable type."
-            <> line <> "Only booleans" <+> group (prettyType1 $ BitType ())
+            <> line <> "Only booleans" <+> group (prettyType1 BitType)
             <+> "and tuples of booleans are marshallable."
         IllegalForeignAddressType t -> "Illegal foreign address type:"
             <+> group (prettyType0 t) <> "." <> line
@@ -128,20 +127,22 @@ instance Pretty Diagnostic where
             <+> group (prettyType1 expected)
             <+> "with actual type" <+> group (prettyType1 actual) <> "."
         TypeExpectedArrow expArg actual -> "Couldn't match expected type"
-            <+> group (prettyType1 $ Arrow () (() <$ expArg) $ TypeVar () 0)
+            <+> group (prettyTypeF 1
+                $ Arrow (prettyType expArg) $ const placeholder)
             <+> "with actual type" <+> group (prettyType1 actual)
-            <> nest 4 (softline <> "where"
-                <+> group (prettyType1 $ TypeVar () 0)
-                <+> "is an unknown type.")
+            <> nest 4
+                (softline <> "where" <+> placeholder <+> "is an unknown type.")
             <> line <> "Only a function can be applied to an argument."
         TypeExpectedForall actual -> "Couldn't match expected type"
-            <+> group (prettyType1 $ Forall () $ TypeVar () 0)
+            <+> group (prettyTypeF 1 . Forall $ const placeholder)
             <+> "with actual type" <+> group (prettyType1 actual)
-            <> nest 4 (softline <> "where"
-                <+> group (prettyType1 $ TypeVar () 0)
-                <+> "is an unknown type.")
+            <> nest 4
+                (softline <> "where" <+> placeholder <+> "is an unknown type.")
             <> line <> "Only a universally quantified function can be applied\
                 \ to an argument."
+      where
+        placeholder :: Doc ann
+        placeholder = "<unknown>"
 
 -- | Prettyprints a 'SourceLocation' at the end of the document.
 withSource :: SourceLocation -> Doc ann -> Doc ann

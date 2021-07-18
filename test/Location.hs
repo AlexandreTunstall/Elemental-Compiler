@@ -4,9 +4,10 @@
 module Location where
 
 import Control.Applicative
+import Data.Fix (unFix)
 import Data.Functor (void)
 import Data.Text qualified as T
-import Hedgehog (MonadTest, Property, footnote, forAll, property, (===))
+import Hedgehog (MonadTest, Property, footnote, property)
 import Prettyprinter (Doc, defaultLayoutOptions, layoutPretty)
 import Prettyprinter.Render.Text (renderStrict)
 import Test.Tasty (TestTree, testGroup)
@@ -32,19 +33,20 @@ locationTests = testGroup "Location"
 
 propDecl :: Property
 propDecl = property $ do
-    decl <- forAll $ genDecl 5
+    decl <- forAllPretty $ genDecl 5
     let maybeCheck
-            :: (Functor f, Labelled f, Eq (f ()), Show (f ()), MonadTest m)
-            => (Decl SrcSpan -> Maybe (f SrcSpan)) -> Parser (f SrcSpan) -> m ()
-        maybeCheck f p = case f parsed of
+            :: (Eq b, MonadTest m)
+            => (a -> SrcSpan) -> (a -> b)
+            -> (Decl SrcSpan -> Maybe a) -> Parser a -> m ()
+        maybeCheck loc strip f p = case f parsed of
             Nothing -> pure ()
-            Just x -> checkLocation' p src x
+            Just x -> checkLocation' loc strip p src x
         src = docToText $ pretty decl
         parsed = parse pDecl src
     footnote $ "Full: " <> T.unpack src
-    maybeCheck getDeclName pDeclName
-    maybeCheck getExpr pExpr0
-    maybeCheck getType pType0
+    maybeCheck getLabel void getDeclName pDeclName
+    maybeCheck (getBiann . unFix) stripExpr getExpr pExpr0
+    maybeCheck (getAnn . unFix) stripType getType pType0
   where
     getDeclName :: Alternative f => Decl a -> f (DeclName a)
     getDeclName decl = case decl of
@@ -54,7 +56,7 @@ propDecl = property $ do
         ForeignPrimitive _ dname _ -> pure dname
         ForeignAddress _ dname _ _ -> pure dname
     
-    getExpr :: Alternative f => Decl a -> f (Expr a)
+    getExpr :: Alternative f => Decl a -> f (AnnExpr a)
     getExpr decl = case decl of
         Binding _ _ expr -> pure expr
         ForeignImport {} -> empty
@@ -62,7 +64,7 @@ propDecl = property $ do
         ForeignPrimitive {} -> empty
         ForeignAddress {} -> empty
     
-    getType :: Alternative f => Decl a -> f (Type a)
+    getType :: Alternative f => Decl a -> f (AnnType a)
     getType decl = case decl of
         Binding {} -> empty
         ForeignImport _ _ _ t -> pure t
@@ -72,40 +74,44 @@ propDecl = property $ do
 
 propSubexpression :: Property
 propSubexpression = property $ do
-    expr <- forAll $ genExpr 0 0 5
-    checkLocation (forAll . genSubexpr) prettyExpr0 pExpr0 expr
+    expr <- forAllPretty $ genExpr 0 0 5
+    checkLocation (getBiann . unFix) stripExpr
+        (forAllPretty . genSubexpr) prettyExpr0 pExpr0 expr
 
 propSubtype :: Property
 propSubtype = property $ do
-    t <- forAll $ genType 0 5
-    checkLocation (forAll . genSubtype) prettyType0 pType0 t
+    t <- forAllPretty $ genType 0 5
+    checkLocation (getAnn . unFix) stripType
+        (forAllPretty . genSubtype) prettyType0 pType0 t
 
 checkLocation
-    :: (Functor f, Labelled f, Eq (f ()), Show (f ()), MonadTest m)
-    => (f SrcSpan -> m (f SrcSpan))
-    -> (f () -> Doc ann)
-    -> Parser (f SrcSpan)
-    -> f () -> m ()
-checkLocation sub enc dec x = do
+    :: (Eq b, MonadTest m)
+    => (a -> SrcSpan) -> (a -> b)
+    -> (a -> m a)
+    -> (b -> Doc ann)
+    -> Parser a
+    -> b -> m ()
+checkLocation loc strip sub enc dec x = do
     let src = docToText $ enc x
         parsed = parse dec src
     x' <- sub parsed
     footnote $ "Full: " <> T.unpack src
-    checkLocation' dec src x'
+    checkLocation' loc strip dec src x'
 
 checkLocation'
-    :: (Functor f, Labelled f, Eq (f ()), Show (f ()), MonadTest m)
-    => Parser (f SrcSpan) -> T.Text -> f SrcSpan -> m ()
-checkLocation' dec src x = do
-    let subsrc = isolateSpan src $ getLabel x
+    :: (Eq b, MonadTest m)
+    => (a -> SrcSpan) -> (a -> b)
+    -> Parser a -> T.Text -> a -> m ()
+checkLocation' loc strip dec src x = do
+    let subsrc = isolateSpan src $ loc x
         subparsed = parse dec subsrc
     footnote $ "Selected: " <> T.unpack subsrc
-    void x === void subparsed
+    strip x === strip subparsed
 
 docToText :: Doc ann -> T.Text
 docToText = renderStrict . layoutPretty defaultLayoutOptions
 
-parse :: Parser (f SrcSpan) -> T.Text -> f SrcSpan
+parse :: Parser a -> T.Text -> a
 parse p = either (error . errorBundlePretty) id
     . runParser (mkParser $ p <* eof) "<gen>"
 

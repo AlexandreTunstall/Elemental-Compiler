@@ -37,6 +37,7 @@ import Control.Carrier.State.Lazy
 import Control.Monad (MonadPlus, void)
 import Control.Monad.Fix (MonadFix)
 import Data.Char (isLetter, isMark, isNumber, isPunctuation, isSymbol)
+import Data.Fix (Fix(Fix))
 import Data.Text (Text)
 import qualified Data.Text.Short as T
 import Data.Void (Void)
@@ -229,34 +230,34 @@ pDeclName :: Parser (DeclName SrcSpan)
 pDeclName = withSrcSpan $ flip DeclName <$> pName
 
 -- | Parses an expression.
-pExpr0 :: Parser (Expr SrcSpan)
+pExpr0 :: Parser (AnnExpr SrcSpan)
 pExpr0 = pLam <|> pTypeLam <|> pExpr1
   where
-    pLam, pTypeLam :: Parser (Expr SrcSpan)
+    pLam, pTypeLam :: Parser (AnnExpr SrcSpan)
     pLam = withSrcSpan $ do
         _ <- char 'λ'
         t <- pType2
         e <- pExpr0
-        pure $ \l -> Lam l t e
+        pure $ \l -> Fix . Biann l $ Lam t e
 
     pTypeLam = withSrcSpan $ do
         _ <- symbol "Λ"
         e <- pExpr0
-        pure $ \l -> TypeLam l e
+        pure $ \l -> Fix . Biann l $ TypeLam e
 
 {-|
     Parses an expression, except that a top-level abstraction or type
     abstraction must be wrapped in parenthesis.
 -}
-pExpr1 :: Parser (Expr SrcSpan)
+pExpr1 :: Parser (AnnExpr SrcSpan)
 pExpr1 = try pAnyApp <|> pExpr2
   where
-    pAnyApp :: Parser (Expr SrcSpan)
+    pAnyApp :: Parser (AnnExpr SrcSpan)
     pAnyApp = chainl1 pExpr2 (pApp <|> pTypeApp) $ pure $ \l e1 er -> case er of
-        Left e2 -> App l e1 e2
-        Right t2 -> TypeApp l e1 t2
+        Left e2 -> Fix . Biann l $ App e1 e2
+        Right t2 -> Fix . Biann l $ TypeApp e1 t2
 
-    pApp, pTypeApp :: Parser (Either (Expr SrcSpan) (Type SrcSpan))
+    pApp, pTypeApp :: Parser (Either (AnnExpr SrcSpan) (AnnType SrcSpan))
     pApp = Left <$> pExpr2
     pTypeApp = char '@' >> Right <$> pType2
 
@@ -264,62 +265,62 @@ pExpr1 = try pAnyApp <|> pExpr2
     Parses an expression, except that a top-level abstraction, type abstraction,
     application, or type application must be wrapped in parenthesis.
 -}
-pExpr2 :: Parser (Expr SrcSpan)
+pExpr2 :: Parser (AnnExpr SrcSpan)
 pExpr2 = between (symbol "(") (symbol ")") pExpr0 <|> try pVar <|> pRef
   where
-    pVar, pRef :: Parser (Expr SrcSpan)
-    pVar = lexeme' $ flip Var <$> Lex.decimal
-    pRef = withSrcSpan $ flip Ref <$> pName
+    pVar, pRef :: Parser (AnnExpr SrcSpan)
+    pVar = lexeme' $ (.) Fix . flip Biann . Var <$> Lex.decimal
+    pRef = withSrcSpan $ (.) Fix . flip Biann . Ref <$> pName
 
 -- | Parses a type.
-pType0 :: Parser (Type SrcSpan)
+pType0 :: Parser (AnnType SrcSpan)
 pType0 = pForall <|> try pArrow <|> pType1
   where
-    pArrow, pForall :: Parser (Type SrcSpan)
+    pArrow, pForall :: Parser (AnnType SrcSpan)
     pArrow = withSrcSpan $ do
         tx <- pType1
         _ <- symbol "→"
         ty <- pType0
-        pure $ \l -> Arrow l tx ty
+        pure $ \l -> Fix . Ann l $ Arrow tx ty
 
-    pForall = withSrcSpan $ flip Forall <$> (symbol "∀" *> pType0)
+    pForall = withSrcSpan
+        $ (.) Fix . flip Ann . Forall <$> (symbol "∀" *> pType0)
 
 {-|
     Parses a type, except that a top-level arrow or universal quantification
     must be wrapped in parenthesis.
 -}
-pType1 :: Parser (Type SrcSpan)
+pType1 :: Parser (AnnType SrcSpan)
 pType1 = pSpecialType' <|> pType2
   where
-    pSpecialType' :: Parser (Type SrcSpan)
-    pSpecialType' = withSrcSpan $ flip SpecialType <$> pSpecialType
+    pSpecialType' :: Parser (AnnType SrcSpan)
+    pSpecialType' = withSrcSpan
+        $ (.) Fix . flip Ann . SpecialType <$> pSpecialType
 
 {-|
     Parses a type, except that a top-level arrow, universal quantification, or
     special type must be wrapped in parenthesis.
 -}
-pType2 :: Parser (Type SrcSpan)
+pType2 :: Parser (AnnType SrcSpan)
 pType2 = between (symbol "(") (symbol ")") pType0 <|> pTypeVar
   where
-    pTypeVar :: Parser (Type SrcSpan)
-    pTypeVar = lexeme' $ flip TypeVar <$> Lex.decimal
+    pTypeVar :: Parser (AnnType SrcSpan)
+    pTypeVar = lexeme' $ (.) Fix . flip Ann . TypeVar <$> Lex.decimal
 
 -- | Parses a special type.
-pSpecialType :: Parser (SpecialType SrcSpan)
+pSpecialType :: Parser (SpecialType (AnnType SrcSpan))
 pSpecialType = pIO <|> pReadPointer <|> pWritePointer
   where
-    pIO, pReadPointer, pWritePointer :: Parser (SpecialType SrcSpan)
-    pIO = withSrcSpan $ flip IOType <$> (symbol "IO" *> pType2)
+    pIO, pReadPointer, pWritePointer :: Parser (SpecialType (AnnType SrcSpan))
+    pIO = IOType <$> (symbol "IO" *> pType2)
 
-    pReadPointer = withSrcSpan $ do
+    pReadPointer = do
         _ <- symbol "ReadPointer"
-        t <- pType2
-        pure $ \l -> PointerType l ReadPointer t
+        PointerType ReadPointer <$> pType2
     
-    pWritePointer = withSrcSpan $ do
+    pWritePointer = do
         _ <- symbol "WritePointer"
-        t <- pType2
-        pure $ \l -> PointerType l WritePointer t
+        PointerType WritePointer <$> pType2
 
 -- | Parses a name.
 pName :: Parser Name
