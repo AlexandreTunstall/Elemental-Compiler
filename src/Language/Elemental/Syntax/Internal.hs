@@ -16,6 +16,7 @@ module Language.Elemental.Syntax.Internal
 
 import Control.Algebra
 import Control.Monad (zipWithM)
+import Data.Bifunctor (Bifunctor, bimap, first)
 import Data.Fix (Fix, foldFix)
 import Data.Functor.Classes (Eq1(liftEq))
 import Data.Monoid (All(All), getAll)
@@ -99,16 +100,17 @@ instance Bimatchable ExprF where
     bimatch (InternalExpr ix) (InternalExpr iy) = bimatch ix iy
     bimatch _ _ = mempty
 
-    imap _ (Ref x) = Ref x
-    imap _ (Var x) = Var x
-    imap _ (App x y) = App x y
-    imap f (TypeApp x y) = TypeApp x $ f y
-    imap f (Lam x y) = Lam (f x) y
-    imap _ (TypeLam x) = TypeLam x
-    imap f (InternalExpr ix) = InternalExpr $ imap f ix
+instance Bifunctor ExprF where
+    bimap _ _ (Ref x) = Ref x
+    bimap _ _ (Var x) = Var x
+    bimap _ g (App x y) = App (g x) (g y)
+    bimap f g (TypeApp x y) = TypeApp (g x) (f y)
+    bimap f g (Lam x y) = Lam (f x) (g y)
+    bimap _ g (TypeLam x) = TypeLam (g x)
+    bimap f g (InternalExpr ix) = InternalExpr $ bimap f g ix
 
 instance Eq t => Eq1 (ExprF t) where
-    liftEq f x y = maybe False getAll $ bimatch (matcher <$> imap tmatcher x) y
+    liftEq f x y = maybe False getAll $ bimatch (matcher <$> first tmatcher x) y
       where
         matcher x' y' = pure . All $ f x' y'
         tmatcher x' y' = pure . All $ x' == y'
@@ -265,19 +267,20 @@ instance Bimatchable InternalExpr where
     bimatch (LlvmIO _) (LlvmIO _) = mempty
     bimatch _ _ = mempty
 
-    imap _ PureIO = PureIO
-    imap _ BindIO = BindIO
-    imap _ (PurePrim s) = PurePrim s
-    imap f (BindPrim s v t g) = BindPrim s v (f t) g
-    imap _ (BitVector xs) = BitVector xs
-    imap _ (Call op argc t) = Call op argc t
-    imap _ (IsolateBit i s) = IsolateBit i s
-    imap _ TestBit = TestBit
-    imap _ LoadPointer = LoadPointer
-    imap _ StorePointer = StorePointer
-    imap _ (StorePrim lt) = StorePrim lt
-    imap _ (LlvmValue v) = LlvmValue v
-    imap _ (LlvmIO gv) = LlvmIO gv
+instance Bifunctor InternalExpr where
+    bimap _ _ PureIO = PureIO
+    bimap _ _ BindIO = BindIO
+    bimap _ _ (PurePrim s) = PurePrim s
+    bimap f g (BindPrim s x t y) = BindPrim s (g x) (f t) (g y)
+    bimap _ g (BitVector xs) = BitVector $ g <$> xs
+    bimap _ _ (Call op argc t) = Call op argc t
+    bimap _ _ (IsolateBit i s) = IsolateBit i s
+    bimap _ _ TestBit = TestBit
+    bimap _ _ LoadPointer = LoadPointer
+    bimap _ _ StorePointer = StorePointer
+    bimap _ _ (StorePrim lt) = StorePrim lt
+    bimap _ _ (LlvmValue v) = LlvmValue v
+    bimap _ _ (LlvmIO gv) = LlvmIO gv
 
 
 instance Show (InternalExpr t rec) where
@@ -340,7 +343,8 @@ instance Bimatchable f => Bimatchable (Biann a f) where
     -- Ignore the annotation because we never want to match it.
     bimatch (Biann _ f) (Biann _ x) = bimatch f x
 
-    imap f (Biann a x) = Biann a $ imap f x
+instance Bifunctor f => Bifunctor (Biann a f) where
+    bimap f g (Biann a x) = Biann a $ bimap f g x
 
 instance (Eq a, Eq1 (f b)) => Eq1 (Biann a f b) where
     liftEq f (Biann a x) (Biann a' y) = a == a' && liftEq f x y
@@ -408,11 +412,11 @@ getReferences = foldFix $ \(Biann l ea) -> case ea of
 
 -- | Strips the annotations from an 'AnnExpr', turning it into an 'Expr'.
 stripExpr :: AnnExpr a -> Expr
-stripExpr = mapFix $ imap stripType . biextract
+stripExpr = mapFix $ first stripType . biextract
 
 -- | Adds an annotation to an 'Expr', turning it into an 'AnnExpr'.
 annExpr :: a -> Expr -> AnnExpr a
-annExpr l = mapFix $ Biann l . imap (annType l)
+annExpr l = mapFix $ Biann l . first (annType l)
 
 -- | Strips the annotation from an 'AnnType', turning it into a 'Type'.
 stripType :: AnnType a -> Type
@@ -424,7 +428,7 @@ annType = mapFix . Ann
 
 -- | Maps the annotation on an 'AnnExpr'.
 mapExpr :: (a -> b) -> AnnExpr a -> AnnExpr b
-mapExpr f = mapFix $ mapBiann f . mapBiext (imap $ mapType f)
+mapExpr f = mapFix $ mapBiann f . mapBiext (first $ mapType f)
 
 -- | Maps the annotation on an 'AnnType'.
 mapType :: (a -> b) -> AnnType a -> AnnType b

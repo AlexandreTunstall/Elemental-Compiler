@@ -6,6 +6,7 @@ module Golden where
 
 import Control.Carrier.Reader (Reader, ReaderC, ask, local, runReader)
 import Control.Effect.Lift (Has, Lift, run, sendIO)
+import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.Fix (foldFix)
@@ -91,7 +92,7 @@ printRewrites h = runReader (-1) . runBirewriter pure printRewrite wrapRewrite
         prettyBiruleIn = ($ 0) . foldFix go
           where
             go :: BiruleInF ExprF TypeF x (Int -> Doc ann) -> Int -> Doc ann
-            go (Bimatch x) idx = prettyExprF idx $ imap (foldFix go') x
+            go (Bimatch x) idx = prettyExprF idx $ first (foldFix go') x
             go (Bisome _) _ = "_"
 
             go' :: RuleInF TypeF x (Int -> Doc ann) -> Int -> Doc ann

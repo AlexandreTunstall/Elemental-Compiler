@@ -33,7 +33,7 @@ module Language.Elemental.Rewrite
     , BiruleOut
     , BiruleInF(Bimatch, Bisome)
     , BiruleOutF(Bistatic, Bidynamic)
-    , Bimatchable(bimatch, imap)
+    , Bimatchable(bimatch)
     -- ** Utility
     , (!)
     , mapFix
@@ -58,6 +58,7 @@ module Language.Elemental.Rewrite
 
 import Control.Algebra (Algebra(alg), Has, send, type (:+:)(L, R))
 import Control.Monad ((>=>))
+import Data.Bifunctor (Bifunctor(first))
 import Data.Fix (Fix(Fix), foldFix, foldFixM, unFix)
 import Data.Foldable (asum)
 import Data.IntMap qualified as IM
@@ -203,7 +204,7 @@ birewrite rules = foldFix $ rewriteTop . Fix
     applyRule out s = foldFix go out
       where
         go :: BiruleOutF f g x (Fix (f (Fix g))) -> Fix (f (Fix g))
-        go (Bistatic x) = rewriteTop $ Fix $ imap applyRule' x
+        go (Bistatic x) = rewriteTop $ Fix $ first applyRule' x
         go (Bidynamic f) = rewriteDeep $ f s
     
         applyRule' :: RuleOut g x -> Fix g
@@ -239,7 +240,7 @@ birewriteM rules = foldFixM $ rewriteTop . Fix
     applyRule out s = foldFixM go out
       where
         go :: BiruleOutF f g x (Fix (f (Fix g))) -> m (Fix (f (Fix g)))
-        go (Bistatic x) = pure . Fix $ imap applyRule' x
+        go (Bistatic x) = pure . Fix $ first applyRule' x
         go (Bidynamic f) = rewriteDeep $ f s
 
         applyRule' :: RuleOut g x -> Fix g
@@ -263,7 +264,7 @@ bimatchRule :: forall f g x. (Bimatchable f, Matchable g, Monoid x) => BiruleIn 
 bimatchRule = foldFix go
   where
     go :: BiruleInF f g x (Fix (f (Fix g)) -> Maybe x) -> Fix (f (Fix g)) -> Maybe x
-    go (Bimatch x) = bimatch (imap matchRule x) . unFix
+    go (Bimatch x) = bimatch (first matchRule x) . unFix
     go (Bisome f) = f
 
 -- | Repeats a rewrite function until it fails.
@@ -300,10 +301,9 @@ class Functor f => Matchable f where
     match :: Monoid b => f (a -> Maybe b) -> f a -> Maybe b
 
 -- | Class for functors with inner structures whose structures can be compared.
-class (forall x. Functor (f x)) => Bimatchable f where
+class (Bifunctor f, forall x. Functor (f x)) => Bimatchable f where
+    -- | Compares the two structures, outputting 'Just' if they match.
     bimatch :: Monoid b => f (a' -> Maybe b) (a -> Maybe b) -> f a' a -> Maybe b
-    -- | Maps the inner structure of the functor.
-    imap :: (x -> y) -> f x a -> f y a
 
 -- | Effect for tracking rewrites. Useful for debugging rewrite rules.
 type Rewriter :: (Type -> Type) -> (Type -> Type) -> Type -> Type

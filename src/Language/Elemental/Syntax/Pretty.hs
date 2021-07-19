@@ -39,6 +39,7 @@ module Language.Elemental.Syntax.Pretty
     , Pretty(pretty)
     ) where
 
+import Data.Bifunctor (first)
 import Data.Fix (foldFix)
 import Data.Text.Short (ShortText, toText)
 import LLVM.AST qualified as LLVM
@@ -103,7 +104,7 @@ instance Pretty (AnnExpr a) where
 -- | Prettyprints an expression.
 prettyAnnExpr0 :: AnnExpr a -> Doc ann
 prettyAnnExpr0 = (.) ($ 0) . foldFix
-    $ flip prettyExprF . imap (prettyType . mapFix extract) . biextract
+    $ flip prettyExprF . first (prettyType . mapFix extract) . biextract
 
 {-|
     Prettyprints an expression. If the top level is an abstraction or a type
@@ -111,7 +112,7 @@ prettyAnnExpr0 = (.) ($ 0) . foldFix
 -}
 prettyAnnExpr1 :: AnnExpr a -> Doc ann
 prettyAnnExpr1 = (.) ($ 1) . foldFix
-    $ flip prettyExprF . imap (prettyType . mapFix extract) . biextract
+    $ flip prettyExprF . first (prettyType . mapFix extract) . biextract
 
 {-|
     Prettyprints an expression. If the top level is an abstraction, a type
@@ -120,19 +121,19 @@ prettyAnnExpr1 = (.) ($ 1) . foldFix
 -}
 prettyAnnExpr2 :: AnnExpr a -> Doc ann
 prettyAnnExpr2 = (.) ($ 2) . foldFix
-    $ flip prettyExprF . imap (prettyType . mapFix extract) . biextract
+    $ flip prettyExprF . first (prettyType . mapFix extract) . biextract
 
 instance Pretty Expr where
     pretty = parens . prettyExpr0
 
 prettyExpr0 :: Expr -> Doc ann
-prettyExpr0 = (.) ($ 0) . foldFix $ flip prettyExprF . imap prettyType
+prettyExpr0 = (.) ($ 0) . foldFix $ flip prettyExprF . first prettyType
 
 prettyExpr1 :: Expr -> Doc ann
-prettyExpr1 = (.) ($ 1) . foldFix $ flip prettyExprF . imap prettyType
+prettyExpr1 = (.) ($ 1) . foldFix $ flip prettyExprF . first prettyType
 
 prettyExpr2 :: Expr -> Doc ann
-prettyExpr2 = (.) ($ 2) . foldFix $ flip prettyExprF . imap prettyType
+prettyExpr2 = (.) ($ 2) . foldFix $ flip prettyExprF . first prettyType
 
 -- | Fold function for expressions of variable precendence.
 prettyExprF :: Int -> ExprF (Int -> Doc ann) (Int -> Doc ann) -> Doc ann

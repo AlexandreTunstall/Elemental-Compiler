@@ -12,6 +12,7 @@ module Language.Elemental.TypeCheck
 import Control.Carrier.Reader (Has, Reader, asks, local, runReader)
 import Control.Effect.State (State, gets, modify)
 import Control.Monad (unless)
+import Data.Bifunctor (first)
 import Data.Fix (Fix(Fix), foldFix, unFix)
 import Data.Map qualified as M
 import Data.Maybe (isJust)
@@ -110,7 +111,7 @@ tcExpr = foldFix $ \(Biann l ea) -> case ea of
         let t = Fix . Forall $ expectType ex'
         pure . Fix . Biann (TypeInfo l $ Just t) $ TypeLam ex'
     InternalExpr _ -> error $ "tcExpr: unexpected internal expression: " <> show
-        (prettyExprF 0 $ const mempty <$ imap (prettyType . stripType) ea)
+        (prettyExprF 0 $ const mempty <$ first (prettyType . stripType) ea)
   where
     -- Why isn't this in the Prelude?
     (!?) :: [a] -> Int -> Maybe a
