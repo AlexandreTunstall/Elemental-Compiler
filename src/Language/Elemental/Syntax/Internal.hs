@@ -213,8 +213,8 @@ data InternalExpr t rec
     | BitVector [rec]
     {-|
         C function call with LLVM-typed arguments.
-        The type of this expression is a function type with a return type of @IO
-        t@ where @t@ is the user-visible type corresponding to the internal
+        The type of this expression is a function type with a return type of
+        @IO t@ where @t@ is the user-visible type corresponding to the internal
         return type.
     -}
     | Call Operand Int LLVM.Type
