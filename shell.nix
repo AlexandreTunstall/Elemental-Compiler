@@ -15,6 +15,7 @@ in
     # This allows searching the installed packages, which is more practical
     # than the public Hoogle servers, since it only shows relevant results.
     withHoogle = true;
+    withHaddock = true;
 
     tools = {
       cabal = "3.2.0.0";

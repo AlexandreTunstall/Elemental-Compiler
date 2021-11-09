@@ -13,7 +13,7 @@
 }: {
   inherit pkgs;
   project = pkgs.haskell-nix.project {
-    compiler-nix-name = "ghc8103";
+    compiler-nix-name = "ghc8107";
 
     # 'cleanGit' cleans a source directory based on the files known by git
     src = pkgs.haskell-nix.haskellLib.cleanGit {

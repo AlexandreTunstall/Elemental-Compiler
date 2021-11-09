@@ -1,6 +1,3 @@
-{-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE TypeOperators #-}
-
 {-|
     Provides the 'IRBuilder' effect, which simplifies the generation of LLVM
     blocks and is analogous to 'LLVM.IRBuilder.MonadIRBuilder'.

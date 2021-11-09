@@ -3,26 +3,31 @@
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Parsers for the Elemental language.
 module Language.Elemental.Parser
-    ( Parser
+    ( PProgram
+    , PDecl
+    , PExpr
+    , PType
+    , AnnName
+    , AnnForeignName
+    , AnnAddress
+    , Parser
     , mkParser
     , pProgram
     , pDecl
-    , pDeclName
     , pExpr0
     , pExpr1
     , pExpr2
     , pType0
     , pType1
     , pType2
-    , pSpecialType
+    , pAnnName
     , pName
     , pForeignName
     , isIdentifierChar
@@ -39,7 +44,7 @@ import Control.Monad.Fix (MonadFix)
 import Data.Char (isLetter, isMark, isNumber, isPunctuation, isSymbol)
 import Data.Fix (Fix(Fix))
 import Data.Text (Text)
-import qualified Data.Text.Short as T
+import Data.Text.Short qualified as T
 import Data.Void (Void)
 import Text.Megaparsec
     ( MonadParsec
@@ -71,11 +76,36 @@ import Text.Megaparsec
     , (<|>)
     )
 import Text.Megaparsec.Char (char, space1)
-import qualified Text.Megaparsec.Char.Lexer as Lex
+import Text.Megaparsec.Char.Lexer qualified as Lex
 
+import Language.Elemental.Algebra
+import Language.Elemental.AST.Decl
+import Language.Elemental.AST.Expr
+import Language.Elemental.AST.Type
+import Language.Elemental.AST.Unchecked
 import Language.Elemental.Location
-import Language.Elemental.Syntax.Internal
 
+
+-- | An unchecked program annotated with source spans.
+type PProgram = SrcSpan * UProgramF PDecl
+
+-- | An unchecked declaration annotated with source spans.
+type PDecl = SrcSpan * UDeclF AnnName AnnForeignName AnnAddress PType PExpr
+
+-- | An unchecked expression annotated with source spans.
+type PExpr = Fix (K SrcSpan * UExprF PType)
+
+-- | An unchecked type annotated with source spans.
+type PType = Fix (K SrcSpan * UTypeF)
+
+-- | A t'Name' annotated with a source span.
+type AnnName = SrcSpan * Name
+
+-- | A t'ForeignName' annotated with a source span.
+type AnnForeignName = SrcSpan * ForeignName
+
+-- | An t'Address' annotated with a source span.
+type AnnAddress = SrcSpan * Address
 
 -- | Parser monad used by the Elemental parsers.
 newtype Parser a = Parser
@@ -113,10 +143,6 @@ space = mkSpace space1
 -- | Lexeme parser.
 lexeme :: Parser a -> Parser a
 lexeme p = gets @(Maybe SourcePos, Parser ()) snd >>= flip Lex.lexeme p
-
--- | Lexeme parser with the source span for the lexeme.
-lexeme' :: Parser (SrcSpan -> a) -> Parser a
-lexeme' = withSrcSpan . lexeme
 
 -- | Tracks the source span parsed by the parser and passes it to the function.
 withSrcSpan :: Parser (SrcSpan -> a) -> Parser a
@@ -173,34 +199,42 @@ chainl1 p1 p2 op = scan
     merge :: SrcSpan -> SrcSpan -> SrcSpan
     merge (SrcSpan begin _) (SrcSpan _ end) = SrcSpan begin end
 
+-- | Annotates the parsed expression with the source span covered by the parser.
+annotateExpr :: Parser (UExprF PType PExpr) -> Parser PExpr
+annotateExpr p = withSrcSpan $ (\x l -> Fix $ P1 (K1 l) x) <$> p
+
+-- -- | Annotates the parsed type with the source span covered by the parser.
+annotateType :: Parser (UTypeF PType) -> Parser PType
+annotateType p = withSrcSpan $ (\x l -> Fix $ P1 (K1 l) x) <$> p
+
 -- | Parses a program, i.e. a list of declarations.
-pProgram :: Parser (SrcSpan, [Decl SrcSpan])
-pProgram = (space *>) . withSrcSpan $ flip (,)
+pProgram :: Parser PProgram
+pProgram = (space *>) . withSrcSpan $ flip P . UProgram
     <$> many (pDecl <* optional (symbol ";"))
 
 -- | Parses a single declaration.
-pDecl :: Parser (Decl SrcSpan)
+pDecl :: Parser PDecl
 pDecl = lineFold $ try pForeign <|> pBinding
   where
-    pBinding, pForeign :: Parser (Decl SrcSpan)
+    pBinding, pForeign :: Parser PDecl
     pBinding = withSrcSpan $ do
-        dname <- pDeclName
+        dname <- pAnnName
         _ <- symbol "="
         e <- pExpr0
-        pure $ \l -> Binding l dname e
+        pure $ \l -> P l $ UBinding dname e
 
     pForeign = symbol "foreign" >> pForeignImport <|> pForeignExport
         <|> pForeignPrimitive <|> pForeignAddress
 
     pForeignImport, pForeignExport, pForeignPrimitive, pForeignAddress
-        :: Parser (Decl SrcSpan)
+        :: Parser PDecl
     pForeignImport = withSrcSpan $ do
         _ <- symbol "import"
-        dname <- pDeclName
+        dname <- pAnnName
         foreignName <- pForeignName
         _ <- symbol ":"
         t <- pType0
-        pure $ \l -> ForeignImport l dname foreignName t
+        pure $ \l -> P l $ UForeignImport dname foreignName t
 
     pForeignExport = withSrcSpan $ do
         _ <- symbol "export"
@@ -208,56 +242,45 @@ pDecl = lineFold $ try pForeign <|> pBinding
         e <- pExpr2
         _ <- symbol ":"
         t <- pType0
-        pure $ \l -> ForeignExport l foreignName e t
+        pure $ \l -> P l $ UForeignExport foreignName e t
 
     pForeignPrimitive = withSrcSpan $ do
         _ <- symbol "primitive"
-        dname <- pDeclName
+        dname <- pAnnName
         _ <- symbol ":"
         t <- pType0
-        pure $ \l -> ForeignPrimitive l dname t
+        pure $ \l -> P l $ UForeignPrimitive dname t
     
     pForeignAddress = withSrcSpan $ do
         _ <- symbol "address"
-        dname <- pDeclName
-        addr <- pIntegral
+        dname <- pAnnName
+        addr <- pAddress
         _ <- symbol ":"
         t <- pType0
-        pure $ \l -> ForeignAddress l dname addr t
-
--- | Parses a declaration name.
-pDeclName :: Parser (DeclName SrcSpan)
-pDeclName = withSrcSpan $ flip DeclName <$> pName
+        pure $ \l -> P l $ UForeignAddress dname addr t
 
 -- | Parses an expression.
-pExpr0 :: Parser (AnnExpr SrcSpan)
+pExpr0 :: Parser PExpr
 pExpr0 = pLam <|> pTypeLam <|> pExpr1
   where
-    pLam, pTypeLam :: Parser (AnnExpr SrcSpan)
-    pLam = withSrcSpan $ do
-        _ <- char 'λ'
-        t <- pType2
-        e <- pExpr0
-        pure $ \l -> Fix . Biann l $ Lam t e
+    pLam, pTypeLam :: Parser PExpr
+    pLam = annotateExpr $ ULam <$> (char 'λ' *> pType2) <*> pExpr0
 
-    pTypeLam = withSrcSpan $ do
-        _ <- symbol "Λ"
-        e <- pExpr0
-        pure $ \l -> Fix . Biann l $ TypeLam e
+    pTypeLam = annotateExpr $ UTypeLam <$> (symbol "Λ" *> pExpr0)
 
 {-|
     Parses an expression, except that a top-level abstraction or type
     abstraction must be wrapped in parenthesis.
 -}
-pExpr1 :: Parser (AnnExpr SrcSpan)
+pExpr1 :: Parser PExpr
 pExpr1 = try pAnyApp <|> pExpr2
   where
-    pAnyApp :: Parser (AnnExpr SrcSpan)
+    pAnyApp :: Parser PExpr
     pAnyApp = chainl1 pExpr2 (pApp <|> pTypeApp) $ pure $ \l e1 er -> case er of
-        Left e2 -> Fix . Biann l $ App e1 e2
-        Right t2 -> Fix . Biann l $ TypeApp e1 t2
+        Left e2 -> Fix . P1 (K1 l) $ UApp e1 e2
+        Right t2 -> Fix . P1 (K1 l) $ UTypeApp e1 t2
 
-    pApp, pTypeApp :: Parser (Either (AnnExpr SrcSpan) (AnnType SrcSpan))
+    pApp, pTypeApp :: Parser (Either PExpr PType)
     pApp = Left <$> pExpr2
     pTypeApp = char '@' >> Right <$> pType2
 
@@ -265,71 +288,65 @@ pExpr1 = try pAnyApp <|> pExpr2
     Parses an expression, except that a top-level abstraction, type abstraction,
     application, or type application must be wrapped in parenthesis.
 -}
-pExpr2 :: Parser (AnnExpr SrcSpan)
+pExpr2 :: Parser PExpr
 pExpr2 = between (symbol "(") (symbol ")") pExpr0 <|> try pVar <|> pRef
   where
-    pVar, pRef :: Parser (AnnExpr SrcSpan)
-    pVar = lexeme' $ (.) Fix . flip Biann . Var <$> Lex.decimal
-    pRef = withSrcSpan $ (.) Fix . flip Biann . Ref <$> pName
+    pVar, pRef :: Parser PExpr
+    pVar = annotateExpr . lexeme $ UVar <$> Lex.decimal
+    pRef = annotateExpr $ URef <$> pName
 
 -- | Parses a type.
-pType0 :: Parser (AnnType SrcSpan)
+pType0 :: Parser PType
 pType0 = pForall <|> try pArrow <|> pType1
   where
-    pArrow, pForall :: Parser (AnnType SrcSpan)
-    pArrow = withSrcSpan $ do
-        tx <- pType1
-        _ <- symbol "→"
-        ty <- pType0
-        pure $ \l -> Fix . Ann l $ Arrow tx ty
+    pArrow, pForall :: Parser PType
+    pArrow = annotateType $ UArrow <$> pType1 <*> (symbol "→" *> pType0)
 
-    pForall = withSrcSpan
-        $ (.) Fix . flip Ann . Forall <$> (symbol "∀" *> pType0)
+    pForall = annotateType $ UForall <$> (symbol "∀" *> pType0)
 
 {-|
     Parses a type, except that a top-level arrow or universal quantification
     must be wrapped in parenthesis.
 -}
-pType1 :: Parser (AnnType SrcSpan)
-pType1 = pSpecialType' <|> pType2
+pType1 :: Parser PType
+pType1 = pIO <|> pReadPtr <|> pWritePtr <|> pType2
   where
-    pSpecialType' :: Parser (AnnType SrcSpan)
-    pSpecialType' = withSrcSpan
-        $ (.) Fix . flip Ann . SpecialType <$> pSpecialType
+    pIO, pReadPtr, pWritePtr :: Parser PType
+    pIO = annotateType $ UIOType <$> (symbol "IO" *> pType2)
+
+    pReadPtr = annotateType $ UPointerType ReadPointer
+        <$> (symbol "ReadPointer" *> pType2)
+
+    pWritePtr = annotateType $ UPointerType WritePointer
+        <$> (symbol "WritePointer" *> pType2)
 
 {-|
     Parses a type, except that a top-level arrow, universal quantification, or
     special type must be wrapped in parenthesis.
 -}
-pType2 :: Parser (AnnType SrcSpan)
+pType2 :: Parser PType
 pType2 = between (symbol "(") (symbol ")") pType0 <|> pTypeVar
   where
-    pTypeVar :: Parser (AnnType SrcSpan)
-    pTypeVar = lexeme' $ (.) Fix . flip Ann . TypeVar <$> Lex.decimal
+    pTypeVar :: Parser PType
+    pTypeVar = annotateType . lexeme $ UTypeVar <$> Lex.decimal
 
--- | Parses a special type.
-pSpecialType :: Parser (SpecialType (AnnType SrcSpan))
-pSpecialType = pIO <|> pReadPointer <|> pWritePointer
-  where
-    pIO, pReadPointer, pWritePointer :: Parser (SpecialType (AnnType SrcSpan))
-    pIO = IOType <$> (symbol "IO" *> pType2)
-
-    pReadPointer = do
-        _ <- symbol "ReadPointer"
-        PointerType ReadPointer <$> pType2
-    
-    pWritePointer = do
-        _ <- symbol "WritePointer"
-        PointerType WritePointer <$> pType2
+-- | Parses an annotated name.
+pAnnName :: Parser AnnName
+pAnnName = withSrcSpan $ flip P <$> pName
 
 -- | Parses a name.
 pName :: Parser Name
 pName = lexeme $ Name . T.fromText <$> takeWhile1P Nothing isIdentifierChar
 
 -- | Parses a foreign name.
-pForeignName :: Parser T.ShortText
-pForeignName = lexeme $ T.fromString
-    <$> (char '"' *> manyTill Lex.charLiteral (char '"'))
+pForeignName :: Parser AnnForeignName
+pForeignName = withSrcSpan . lexeme
+    $ (\x l -> P l . ForeignName $ T.fromString x)
+        <$> (char '"' *> manyTill Lex.charLiteral (char '"'))
+
+-- | Parses an address.
+pAddress :: Parser AnnAddress
+pAddress = withSrcSpan $ flip P . Address <$> pIntegral
 
 -- | Parses an integral, accounting for the optional base prefix.
 pIntegral :: Integral n => Parser n

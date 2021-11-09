@@ -1,13 +1,12 @@
 {-# LANGUAGE ImportQualifiedPost #-}
+{-# LANGUAGE NoStarIsType #-}
 
 -- | Tests which verify the correctness of source location annotations.
 module Location where
 
 import Control.Applicative
-import Data.Fix (unFix)
-import Data.Functor (void)
 import Data.Text qualified as T
-import Hedgehog (MonadTest, Property, footnote, property)
+import Hedgehog (MonadTest, Property, footnote, forAllWith, property)
 import Prettyprinter (Doc, defaultLayoutOptions, layoutPretty)
 import Prettyprinter.Render.Text (renderStrict)
 import Test.Tasty (TestTree, testGroup)
@@ -22,6 +21,7 @@ import Text.Megaparsec
 
 import Gen
 import Language.Elemental
+import Util
 
 
 locationTests :: TestTree
@@ -33,56 +33,58 @@ locationTests = testGroup "Location"
 
 propDecl :: Property
 propDecl = property $ do
-    decl <- forAllPretty $ genDecl 5
+    decl <- forAllWith (show . prettyUDecl) $ genUDecl 5
     let maybeCheck
             :: (Eq b, MonadTest m)
             => (a -> SrcSpan) -> (a -> b)
-            -> (Decl SrcSpan -> Maybe a) -> Parser a -> m ()
+            -> (PDecl -> Maybe a) -> Parser a -> m ()
         maybeCheck loc strip f p = case f parsed of
             Nothing -> pure ()
             Just x -> checkLocation' loc strip p src x
-        src = docToText $ pretty decl
+        src = docToText $ prettyUDecl decl
         parsed = parse pDecl src
     footnote $ "Full: " <> T.unpack src
-    maybeCheck getLabel void getDeclName pDeclName
-    maybeCheck (getBiann . unFix) stripExpr getExpr pExpr0
-    maybeCheck (getAnn . unFix) stripType getType pType0
+    maybeCheck fstP sndP getDeclName pAnnName
+    maybeCheck topLevelAnn stripExpr getExpr pExpr0
+    maybeCheck topLevelAnn stripType getType pType0
   where
-    getDeclName :: Alternative f => Decl a -> f (DeclName a)
-    getDeclName decl = case decl of
-        Binding _ dname _ -> pure dname
-        ForeignImport _ dname _ _ -> pure dname
-        ForeignExport {} -> empty
-        ForeignPrimitive _ dname _ -> pure dname
-        ForeignAddress _ dname _ _ -> pure dname
+    getDeclName :: Alternative f => PDecl -> f AnnName
+    getDeclName decl = case sndP decl of
+        UBinding dname _ -> pure dname
+        UForeignImport dname _ _ -> pure dname
+        UForeignExport {} -> empty
+        UForeignPrimitive dname _ -> pure dname
+        UForeignAddress dname _ _ -> pure dname
     
-    getExpr :: Alternative f => Decl a -> f (AnnExpr a)
-    getExpr decl = case decl of
-        Binding _ _ expr -> pure expr
-        ForeignImport {} -> empty
-        ForeignExport _ _ expr _ -> pure expr
-        ForeignPrimitive {} -> empty
-        ForeignAddress {} -> empty
+    getExpr :: Alternative f => PDecl -> f PExpr
+    getExpr decl = case sndP decl of
+        UBinding _ expr -> pure expr
+        UForeignImport {} -> empty
+        UForeignExport _ expr _ -> pure expr
+        UForeignPrimitive {} -> empty
+        UForeignAddress {} -> empty
     
-    getType :: Alternative f => Decl a -> f (AnnType a)
-    getType decl = case decl of
-        Binding {} -> empty
-        ForeignImport _ _ _ t -> pure t
-        ForeignExport _ _ _ t -> pure t
-        ForeignPrimitive _ _ t -> pure t
-        ForeignAddress _ _ _ t -> pure t
+    getType :: Alternative f => PDecl -> f PType
+    getType decl = case sndP decl of
+        UBinding {} -> empty
+        UForeignImport _ _ t -> pure t
+        UForeignExport _ _ t -> pure t
+        UForeignPrimitive _ t -> pure t
+        UForeignAddress _ _ t -> pure t
 
 propSubexpression :: Property
 propSubexpression = property $ do
-    expr <- forAllPretty $ genExpr 0 0 5
-    checkLocation (getBiann . unFix) stripExpr
-        (forAllPretty . genSubexpr) prettyExpr0 pExpr0 expr
+    expr <- forAllWith (show . prettyUExpr 0) $ genUExpr 0 0 5
+    checkLocation topLevelAnn stripExpr
+        (forAllWith (show . prettyPExpr 0) . genPSubexpr)
+        (prettyUExpr 0) pExpr0 expr
 
 propSubtype :: Property
 propSubtype = property $ do
-    t <- forAllPretty $ genType 0 5
-    checkLocation (getAnn . unFix) stripType
-        (forAllPretty . genSubtype) prettyType0 pType0 t
+    t <- forAllWith (show . prettyUType 0) $ genUType 0 5
+    checkLocation topLevelAnn stripType
+        (forAllWith (show . prettyPType 0) . genPSubtype)
+        (prettyUType 0) pType0 t
 
 checkLocation
     :: (Eq b, MonadTest m)
