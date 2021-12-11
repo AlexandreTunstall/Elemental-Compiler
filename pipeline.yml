@@ -8,5 +8,5 @@ steps:
   displayName: 'Install Nix'
 - script: |
     . ~/.nix-profile/etc/profile.d/nix.sh
-    nix-build nix/release.nix
+    nix-build
   displayName: 'Build'
