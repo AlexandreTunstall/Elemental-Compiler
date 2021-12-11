@@ -58,8 +58,6 @@ common shared
       -- Warnings not documented as not being enabled by -Wall?
       -Wmissing-deriving-strategies
       -- -Wunused-packages
-  haddock-options:
-      show-extensions
 
 library
   import:              shared
