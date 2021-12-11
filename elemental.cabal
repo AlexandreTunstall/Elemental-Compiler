@@ -114,8 +114,7 @@ test-suite test
     , filepath ^>= 1.4
     , hedgehog ^>= 1.0
     , tasty ^>= 1.4
-    , tasty-ant-xml ^>= 1.1
     , tasty-golden ^>= 2.3
-    , tasty-hedgehog ^>= 1.0
+    , tasty-hedgehog ^>= 1.1
   ghc-options:
     -threaded

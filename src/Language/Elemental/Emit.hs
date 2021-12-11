@@ -572,7 +572,7 @@ foldPointer addr = \case
       where
         SPointerType _ tx = exprType SZero SNil et
 
--- | Converts an 'LlvmType' into an LLVM type in the LLVM AST.
+-- | Converts an t'LlvmType' into an LLVM type in the LLVM AST.
 llvmType :: SLlvmType t -> LLVM.Type
 llvmType = \case
     SLlvmInt size -> case sCmpNat size SZero of
@@ -586,7 +586,7 @@ llvmForeignName (ForeignName t) = LLVM.Name $ toShortByteString t
 
 {-|
     Converts an address to an LLVM operand representing that address. The given
-    'LlvmType' is used to determine the type of the operand.
+    t'LlvmType' is used to determine the type of the operand.
 -}
 llvmAddress :: SLlvmType lt -> Address -> LLVM.Operand
 llvmAddress lt (Address addr) = LLVM.ConstantOperand

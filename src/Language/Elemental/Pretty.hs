@@ -100,7 +100,7 @@ prettyType = flip $ \case
         SWritePointer -> "WritePointer" <+> prettyType 2 tx
     SLlvmType lt -> withPrec 3 $ prettyLlvmType lt
 
--- | Prettyprints an 'LlvmType'.
+-- | Prettyprints an t'LlvmType'.
 prettyLlvmType :: SLlvmType lt -> Doc ann
 prettyLlvmType = \case
     SLlvmInt size -> "i" <> prettyNat size

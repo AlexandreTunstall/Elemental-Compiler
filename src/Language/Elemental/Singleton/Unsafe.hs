@@ -13,6 +13,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
 
+{-# OPTIONS_HADDOCK not-home #-}
+
 {-|
     The unsafe internals of "Language.Elemental.Singleton".
     Misuse will lead to heap corruption and other nasty unpredictable effects.

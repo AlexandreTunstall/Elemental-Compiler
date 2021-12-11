@@ -39,6 +39,7 @@ module Language.Elemental.AST.Expr
     , AllIsOpType
     , sAllIsOpType
     , HasForeignType(..)
+    , ForeignType
     , BuildForeignType
     , sBuildForeignType
     , MarshallableType(..)
@@ -197,11 +198,11 @@ pattern (:\)
 pattern tx :\ ey = Lam tx ey
 infixr 0 :\
 
--- | Type synonym to convert any 'LlvmType' into its compiler representation.
+-- | Type synonym to convert any t'LlvmType' into its compiler representation.
 type LlvmOperandType :: LlvmType -> Kind.Type
 type LlvmOperandType lt = If (IsOpType lt) LLVM.Operand ()
 
--- | Is the 'LlvmType' a legal LLVM operand type? Notably, @void@ is not.
+-- | Is the t'LlvmType' a legal LLVM operand type? Notably, @void@ is not.
 type IsOpType :: LlvmType -> Bool
 type family IsOpType lt where
     IsOpType ('LlvmInt size) = SwitchOrd (CmpNat size 'Zero) Stuck 'False 'True
@@ -213,7 +214,7 @@ sIsOpType (SLlvmInt size) = case sCmpNat size SZero of
     SEQ -> SFalse
     SGT -> STrue
 
--- | Is every 'LlvmType' in a list a legal LLVM operand type?
+-- | Is every t'LlvmType' in a list a legal LLVM operand type?
 type AllIsOpType :: [LlvmType] -> Bool
 type family AllIsOpType lts where
     AllIsOpType '[] = 'True
@@ -227,13 +228,13 @@ sAllIsOpType (lt :^ lts) = sIsOpType lt &&^ sAllIsOpType lts
 -- | The type has an isomorphic foreign type.
 type HasForeignType :: Type -> Kind.Constraint
 class AllIsOpType (ForeignArgs t) ~ 'True => HasForeignType t where
-    -- | The argument 'LlvmType' of the foreign type.
+    -- | The argument t'LlvmType' of the foreign type.
     type ForeignArgs t :: [LlvmType]
 
     -- | Singleton version of 'ForeignArgs'.
     sForeignArgs :: SType tscope t -> SList SLlvmType (ForeignArgs t)
 
-    -- | The return 'LlvmType' of the foreign type.
+    -- | The return t'LlvmType' of the foreign type.
     type ForeignRet t :: LlvmType
 
     -- | Singleton version of 'ForeignRet'.
@@ -300,7 +301,7 @@ instance (MarshallableType tx, IsOpType (Marshall tx) ~ 'True
 -- | The foreign type corresponding to a native type.
 type ForeignType t = BuildForeignType (ForeignArgs t) (ForeignRet t)
 
--- | Builds a type from a list of argument 'LlvmType' and a return 'LlvmType'.
+-- | Builds a type from a list of argument t'LlvmType' and a return t'LlvmType'.
 type BuildForeignType :: [LlvmType] -> LlvmType -> Type
 type family BuildForeignType ltargs ltret where
     BuildForeignType '[] ltret = 'IOType ('LlvmType ltret)
@@ -315,22 +316,22 @@ sBuildForeignType SNil ltret = SIOType $ SLlvmType ltret
 sBuildForeignType (ltarg :^ ltargs) ltret
     = SLlvmType ltarg :-> sBuildForeignType ltargs ltret
 
--- | The type is isomorphic to and can be marshalled to and from an 'LlvmType'.
+-- | The type is isomorphic to and can be marshalled to and from an t'LlvmType'.
 type MarshallableType :: Type -> Kind.Constraint
 class t ~ Unmarshall (Marshall t) => MarshallableType t where
-    -- | The 'LlvmType' corresponding to a native type.
+    -- | The t'LlvmType' corresponding to a native type.
     type Marshall t :: LlvmType
 
     -- | Singleton version of 'Marshall'.
     sMarshall :: SType scope t -> SLlvmType (Marshall t)
 
-    -- | Marshalls an expression from the 'LlvmType' to the native type.
+    -- | Marshalls an expression from the t'LlvmType' to the native type.
     marshallIn
         :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
         -> Expr tscope scope ('LlvmType (Marshall t))
         -> Expr tscope scope t
     
-    -- | Marshalls an expression from the native type to the 'LlvmType'.
+    -- | Marshalls an expression from the native type to the t'LlvmType'.
     marshallOut
         :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
         -> Expr tscope scope t
@@ -479,7 +480,9 @@ sArgCount (SIOType _) = SZero
 sArgCount (SPointerType _ _) = SZero
 sArgCount (SLlvmType _) = SZero
 
--- | Converts an 'LlvmType' to an isomorphic native type. Inverse of 'Marshall'.
+{-|
+    Converts an t'LlvmType' to an isomorphic native type. Inverse of 'Marshall'.
+-}
 type Unmarshall :: LlvmType -> Type
 type family Unmarshall lt where
     Unmarshall ('LlvmInt 'Zero) = 'Forall ('TypeVar 'Zero :-> 'TypeVar 'Zero)

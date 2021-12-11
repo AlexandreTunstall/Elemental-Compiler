@@ -224,7 +224,7 @@ unifyPtrKind mismatch apk bpk cont = case (apk, bpk) of
         (SWritePointer, SWritePointer) -> cont
         _ -> mismatch
 
--- | Attempts to unify two 'LlvmType', producing a proof if they're equal.
+-- | Attempts to unify two t'LlvmType', producing a proof if they're equal.
 unifyLlvmType :: r -> SLlvmType exp -> SLlvmType act -> (exp ~ act => r) -> r
 unifyLlvmType mismatch lta ltb cont = case (lta, ltb) of
         (SLlvmInt sizea, SLlvmInt sizeb) -> unifyNat mismatch sizea sizeb cont
