@@ -1,0 +1,12 @@
+-- Verifies that bits are marshalled in the correct order
+
+foreign primitive pureIO : ∀ 0 → IO 0
+
+foreign export "main" main : (∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) → IO (∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0)
+
+main = λ(∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) pureIO @(∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0)
+    (0 @(∀ ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) → 0) (λ(∀ 0 → 0 → 0) λ(∀ 0 → 0 → 0)
+        Λ λ((∀ 0 → 0 → 0) → (∀ 0 → 0 → 0) → 0) 0 2 (not 1)
+        ))
+
+not = λ(∀ 0 → 0 → 0) Λ λ0 λ0 2 @0 0 1

@@ -1,5 +1,5 @@
 foreign address r_bit 0x2000 : ReadPointer (∀ 0 → 0 → 0)
-foreign address w_bit 0x2000 : WritePointer (∀ 0 → 0 → 0)
+foreign address w_bit 8192 : WritePointer (∀ 0 → 0 → 0)
 
 foreign primitive pureIO : ∀ 0 → IO 0
 foreign primitive bindIO : ∀ IO 0 → ∀ (1 → IO 0) → IO 0

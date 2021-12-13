@@ -3,7 +3,16 @@ cabal-version:       2.2
 name:                elemental
 version:             0.1.0.0
 synopsis:            A compiler for the Elemental intermediate language
--- description:
+description:
+    The Elemental language is a lambda calculus similar to System F but extended
+    with a foreign function interface intended for use as an intermediate
+    language for more practical total functional programming languages.
+
+    This package is a compiler of the language that targets LLVM and requires no
+    runtime system or heap.
+
+    See the "Language.Elemental" module for more information on how to use the
+    library.
 bug-reports:         https://github.com/AlexandreTunstall/Elemental-Compiler/issues
 -- There is no license yet (i.e. all rights reserved)
 -- Please contact me if you would like to use the package or contribute to it
@@ -15,7 +24,7 @@ copyright:           © 2020-2021 Alexandre Tunstall
 -- homepage:
 category:            Compiler, Development, Language
 build-type:          Simple
-tested-with:         GHC == 8.10.3
+tested-with:         GHC == 8.10.7
 extra-source-files:  test/Golden/*.elem, test/Golden/*.ll
 
 common shared
@@ -23,11 +32,14 @@ common shared
       base ^>= 4.14
     , bytestring ^>= 0.10
     , containers ^>= 0.6
+    , data-fix ^>= 0.3
     , fused-effects ^>= 1.1
+    , integer-logarithms ^>= 1.0
     , llvm-hs == 9.0.1
     , llvm-hs-pure ^>= 9.0
     , megaparsec ^>= 9.0
     , prettyprinter ^>= 1.7
+    , tagged ^>= 0.8
     , text ^>= 1.2
     , text-short ^>= 0.1
   default-language:    Haskell2010
@@ -42,6 +54,7 @@ common shared
       -Wredundant-constraints
       -Wpartial-fields
       -Wmissed-specialisations
+      -Wstar-is-type
       -- Warnings not documented as not being enabled by -Wall?
       -Wmissing-deriving-strategies
       -- -Wunused-packages
@@ -51,24 +64,27 @@ library
   hs-source-dirs:      src
   exposed-modules:
       Language.Elemental
+    , Language.Elemental.Algebra
+    , Language.Elemental.AST.Decl
+    , Language.Elemental.AST.Expr
+    , Language.Elemental.AST.Program
+    , Language.Elemental.AST.Type
+    , Language.Elemental.AST.Unchecked
     , Language.Elemental.Diagnostic
     , Language.Elemental.Emit
     , Language.Elemental.Location
-    , Language.Elemental.Normalise
     , Language.Elemental.Parser
-    , Language.Elemental.Rewrite
-    , Language.Elemental.Syntax
+    , Language.Elemental.Pretty
+    , Language.Elemental.Primitive
+    , Language.Elemental.Singleton
+    , Language.Elemental.Singleton.Unsafe
     , Language.Elemental.TypeCheck
     , Control.Carrier.IRBuilder
     , Control.Carrier.ModuleBuilder
     , Control.Effect.IRBuilder
     , Control.Effect.ModuleBuilder
   other-modules:
-      Language.Elemental.Emit.Internal
-    , Language.Elemental.Syntax.Internal
-    , Language.Elemental.Syntax.Pretty
-    , Language.Elemental.Primitive
-    , Paths_elemental
+      Paths_elemental
   ghc-options:
     -Wmissing-export-lists
 
@@ -77,10 +93,7 @@ executable elemental
   main-is:             Main.hs
   hs-source-dirs:      cli
   build-depends:
-      -- Cabal complains about an extraneous version range because "the library will always be used",
-      -- but don't be deceived, because "cabal repl" won't work without a build-depends on the library.
-      elemental
-    , prettyprinter-ansi-terminal ^>= 1.1
+      prettyprinter-ansi-terminal ^>= 1.1
   ghc-options:
     -threaded
 
@@ -95,13 +108,13 @@ test-suite test
     , Golden
     , Location
     , Pretty
+    , Util
   build-depends:
       elemental
     , filepath ^>= 1.4
     , hedgehog ^>= 1.0
     , tasty ^>= 1.4
-    , tasty-ant-xml ^>= 1.1
     , tasty-golden ^>= 2.3
-    , tasty-hedgehog ^>= 1.0
+    , tasty-hedgehog ^>= 1.1
   ghc-options:
     -threaded

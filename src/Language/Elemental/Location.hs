@@ -1,5 +1,10 @@
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NoStarIsType #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Definitions for tracking the source location of diagnostics.
 module Language.Elemental.Location
@@ -8,8 +13,12 @@ module Language.Elemental.Location
     , SrcSpan(..)
     ) where
 
+import Data.Data (Data)
+import Data.Fix (Fix(Fix))
 import Prettyprinter (Doc, Pretty(pretty), line, nest, parens, vsep)
 import Text.Megaparsec.Pos (Pos, SourcePos(SourcePos), unPos)
+
+import Language.Elemental.Algebra
 
 
 -- | A source span consisting of a start position and an end position.
@@ -18,7 +27,7 @@ data SrcSpan = SrcSpan
     -- ^ The start position.
     SourcePos
     -- ^ The end position.
-    deriving stock (Show)
+    deriving stock (Data, Show)
 
 instance Pretty SrcSpan where
     pretty (SrcSpan (SourcePos fb lb cb) (SourcePos fe le ce)) = if fb == fe
@@ -79,3 +88,12 @@ instance IsLoc SourceLocation where
 
 instance IsLoc l => IsLoc [l] where
     getLoc = SourceMultiple . fmap getLoc
+
+instance IsLoc (SrcSpan * a) where
+    getLoc (P loc _) = getLoc loc
+
+instance IsLoc ((K SrcSpan * f) a) where
+    getLoc (P1 (K1 loc) _) = getLoc loc
+
+instance IsLoc (f (Fix f)) => IsLoc (Fix f) where
+    getLoc (Fix f) = getLoc f
