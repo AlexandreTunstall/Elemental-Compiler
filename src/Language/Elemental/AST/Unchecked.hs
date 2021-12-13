@@ -11,7 +11,7 @@ module Language.Elemental.AST.Unchecked
     , UExprF(..)
     , UTypeF(..)
     , Name(..)
-    -- * Pure Fixed Points
+    -- * Simple Fixed Points
     , UProgram
     , UDecl
     , UExpr
@@ -31,6 +31,7 @@ import Prettyprinter
 import Language.Elemental.AST.Decl
 import Language.Elemental.AST.Expr
 import Language.Elemental.AST.Type
+
 
 -- | Simple unchecked programs in the AST.
 type UProgram = UProgramF UDecl

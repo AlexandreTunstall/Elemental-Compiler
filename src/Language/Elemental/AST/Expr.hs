@@ -719,13 +719,6 @@ substituteExprType tscope scope idx tsub = withProofs $ \case
     InsertBit size -> InsertBit size
     TestBit ex -> TestBit $ substituteExprType tscope scope idx tsub ex
   where
-    {-
-        Adding 
-            , Substitute 0 (Substitute idx tsub ty)
-                (Substitute (Succ idx) (Increment 0 tsub) tx) ~ t
-        to the type of 'withProofs' causes a GHC panic (8.10.7).
-        (Note that tx and ty are out of scope.)
-    -}
     withProofs
         :: (SubstituteAll ('Succ idx) (Increment 'Zero tsub)
             (IncrementAll 'Zero scope)

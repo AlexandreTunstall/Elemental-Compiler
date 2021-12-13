@@ -39,7 +39,6 @@ common shared
     , llvm-hs-pure ^>= 9.0
     , megaparsec ^>= 9.0
     , prettyprinter ^>= 1.7
-    , tagged ^>= 0.8
     , text ^>= 1.2
     , text-short ^>= 0.1
   default-language:    Haskell2010
