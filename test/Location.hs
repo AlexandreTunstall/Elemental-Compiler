@@ -5,19 +5,16 @@
 module Location where
 
 import Control.Applicative
+import Data.Bifunctor (first)
 import Data.Text qualified as T
-import Hedgehog (MonadTest, Property, footnote, forAllWith, property)
+import GHC.Stack (HasCallStack)
+import Hedgehog
+    (MonadTest, Property, evalEither, footnote, forAllWith, property)
 import Prettyprinter (Doc, defaultLayoutOptions, layoutPretty)
 import Prettyprinter.Render.Text (renderStrict)
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.Hedgehog (testProperty)
-import Text.Megaparsec
-    ( MonadParsec(eof)
-    , SourcePos(sourceColumn, sourceLine)
-    , errorBundlePretty
-    , runParser
-    , unPos
-    )
+import Text.Megaparsec (MonadParsec(eof), errorBundlePretty, runParser)
 
 import Gen
 import Language.Elemental
@@ -37,16 +34,22 @@ propDecl = property $ do
     let maybeCheck
             :: (Eq b, MonadTest m)
             => (a -> SrcSpan) -> (a -> b)
-            -> (PDecl -> Maybe a) -> Parser a -> m ()
-        maybeCheck loc strip f p = case f parsed of
+            -> Maybe a -> Parser a -> m ()
+        maybeCheck loc strip parsed p = case parsed of
             Nothing -> pure ()
             Just x -> checkLocation' loc strip p src x
         src = docToText $ prettyUDecl decl
-        parsed = parse pDecl src
     footnote $ "Full: " <> T.unpack src
-    maybeCheck fstP sndP getDeclName pAnnName
-    maybeCheck topLevelAnn stripExpr getExpr pExpr0
-    maybeCheck topLevelAnn stripType getType pType0
+    parsed <- parse pDecl src
+    footnote $ "Name: " <> maybe "<Nothing>" (show . sndP) (getDeclName parsed)
+    footnote $ "Foreign Name: "
+        <> maybe "<Nothing>" (show . sndP) (getForeignName parsed)
+    maybeCheck fstP sndP (getDeclName parsed) pAnnName
+    footnote "Name OK"
+    maybeCheck fstP sndP (getForeignName parsed) pForeignName
+    maybeCheck topLevelAnn stripExpr (getExpr parsed) pExpr0
+    footnote "Expression OK"
+    maybeCheck topLevelAnn stripType (getType parsed) pType0
   where
     getDeclName :: Alternative f => PDecl -> f AnnName
     getDeclName decl = case sndP decl of
@@ -55,6 +58,14 @@ propDecl = property $ do
         UForeignExport {} -> empty
         UForeignPrimitive dname _ -> pure dname
         UForeignAddress dname _ _ -> pure dname
+
+    getForeignName :: Alternative f => PDecl -> f AnnForeignName
+    getForeignName decl = case sndP decl of
+        UBinding {} -> empty
+        UForeignImport _ fname _ -> pure fname
+        UForeignExport fname _ _ -> pure fname
+        UForeignPrimitive {} -> empty
+        UForeignAddress {} -> empty
     
     getExpr :: Alternative f => PDecl -> f PExpr
     getExpr decl = case sndP decl of
@@ -95,9 +106,9 @@ checkLocation
     -> b -> m ()
 checkLocation loc strip sub enc dec x = do
     let src = docToText $ enc x
-        parsed = parse dec src
-    x' <- sub parsed
     footnote $ "Full: " <> T.unpack src
+    parsed <- parse dec src
+    x' <- sub parsed
     checkLocation' loc strip dec src x'
 
 checkLocation'
@@ -106,42 +117,27 @@ checkLocation'
     -> Parser a -> T.Text -> a -> m ()
 checkLocation' loc strip dec src x = do
     let subsrc = isolateSpan src $ loc x
-        subparsed = parse dec subsrc
+    footnote $ "Selected location: " <> show (loc x)
     footnote $ "Selected: " <> T.unpack subsrc
+    subparsed <- parse dec subsrc
     strip x === strip subparsed
 
 docToText :: Doc ann -> T.Text
 docToText = renderStrict . layoutPretty defaultLayoutOptions
 
-parse :: Parser a -> T.Text -> a
-parse p = either (error . errorBundlePretty) id
+parse :: (MonadTest m, HasCallStack) => Parser a -> T.Text -> m a
+parse p = evalEither . first (ShowString . errorBundlePretty)
     . runParser (mkParser $ p <* eof) "<gen>"
+
+-- Hedgehog doesn't give us much control of the error message.
+newtype ShowString = ShowString { unShowString :: String }
+
+instance Show ShowString where
+    show = unShowString
 
 isolateSpan :: T.Text -> SrcSpan -> T.Text
 isolateSpan src (SrcSpan begin end)
-    | begin > end = error "start position is after end position"
-    | endLinePos > length srcLines = error $ "end line " <> show endLinePos
-        <> " outside of text with " <> show (length srcLines) <> " lines"
-    | beginColPos > T.length beginLine + 1 = error $ "start column "
-        <> show beginColPos <> " outside of line of length "
-        <> show (T.length beginLine + 1)
-    | endColPos > T.length endLine + 1 = error $ "end column " <> show endColPos
-        <> " outside of line of length " <> show (T.length endLine + 1)
-    | beginLinePos == endLinePos
-        = T.drop (beginColPos - 1) $ T.take (endColPos - 1) beginLine
-    | otherwise = T.concat $ T.drop (beginColPos - 1) beginLine
-        : drop (beginLinePos - 1) (take (endLinePos - 1) srcLines)
-        <> [T.take (endColPos - 1) endLine]
-  where
-    beginLinePos, endLinePos, beginColPos, endColPos :: Int
-    beginLinePos = unPos $ sourceLine begin
-    endLinePos = unPos $ sourceLine end
-    beginColPos = unPos $ sourceColumn begin
-    endColPos = unPos $ sourceColumn end
+    | sourceOffset begin > sourceOffset end
+        = error "start position is after end position"
+    | otherwise = T.drop (sourceOffset begin) $ T.take (sourceOffset end) src
 
-    srcLines :: [T.Text]
-    srcLines = T.lines src
-
-    beginLine, endLine :: T.Text
-    beginLine = srcLines !! (beginLinePos - 1)
-    endLine = srcLines !! (endLinePos - 1)

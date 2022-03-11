@@ -11,6 +11,7 @@ module Language.Elemental.Location
     ( IsLoc(..)
     , SourceLocation(..)
     , SrcSpan(..)
+    , FullSourcePos(..)
     ) where
 
 import Data.Data (Data)
@@ -21,16 +22,25 @@ import Text.Megaparsec.Pos (Pos, SourcePos(SourcePos), unPos)
 import Language.Elemental.Algebra
 
 
+-- | A user-friendly source position and machine-friendly source offset.
+data FullSourcePos = FullSourcePos
+    { sourcePos :: SourcePos
+    -- ^ The line and column number of the position.
+    , sourceOffset :: Int
+    -- ^ How many characters precede the position.
+    } deriving stock (Data, Show)
+
 -- | A source span consisting of a start position and an end position.
 data SrcSpan = SrcSpan
-    SourcePos
+    FullSourcePos
     -- ^ The start position.
-    SourcePos
+    FullSourcePos
     -- ^ The end position.
     deriving stock (Data, Show)
 
 instance Pretty SrcSpan where
-    pretty (SrcSpan (SourcePos fb lb cb) (SourcePos fe le ce)) = if fb == fe
+    pretty (SrcSpan (FullSourcePos (SourcePos fb lb cb) _)
+        (FullSourcePos (SourcePos fe le ce) _)) = if fb == fe
         then pretty fb <> ":" <> if lb == le
             then prettyPos lb <> ":" <> if cb == ce
                 then prettyPos cb

@@ -66,8 +66,8 @@ import Text.Megaparsec
         )
     , Parsec
     , Pos
-    , SourcePos
     , between
+    , getOffset
     , getSourcePos
     , many
     , manyTill
@@ -109,12 +109,12 @@ type AnnAddress = SrcSpan * Address
 
 -- | Parser monad used by the Elemental parsers.
 newtype Parser a = Parser
-    { getParser :: StateC (Maybe SourcePos, Parser ())
+    { getParser :: StateC (Maybe FullSourcePos, Parser ())
         (LiftC (Parsec Void Text)) a
     }
     deriving newtype
         ( Functor, Applicative, Alternative, Monad, MonadPlus, MonadFix
-        , Algebra (State (Maybe SourcePos, Parser ())
+        , Algebra (State (Maybe FullSourcePos, Parser ())
             :+: Lift (Parsec Void Text))
         )
 
@@ -132,8 +132,8 @@ mkParser (Parser m) = runM $ evalState (Nothing, space) m
 -}
 mkSpace :: Parser () -> Parser ()
 mkSpace p = do
-    pos <- getSourcePos
-    modify @(Maybe SourcePos, Parser ()) . first . const $ Just pos
+    pos <- getFullSourcePos
+    modify @(Maybe FullSourcePos, Parser ()) . first . const $ Just pos
     >> Lex.space p (Lex.skipLineComment "--") (Lex.skipBlockComment "{-" "-}")
 
 -- | Whitespace parser. This parses comments and newlines.
@@ -142,20 +142,23 @@ space = mkSpace space1
 
 -- | Lexeme parser.
 lexeme :: Parser a -> Parser a
-lexeme p = gets @(Maybe SourcePos, Parser ()) snd >>= flip Lex.lexeme p
+lexeme p = gets @(Maybe FullSourcePos, Parser ()) snd >>= flip Lex.lexeme p
 
 -- | Tracks the source span parsed by the parser and passes it to the function.
 withSrcSpan :: Parser (SrcSpan -> a) -> Parser a
 withSrcSpan p = do
-    start <- getSourcePos
-    modify @(Maybe SourcePos, Parser ()) . first $ const Nothing
+    start <- getFullSourcePos
+    modify @(Maybe FullSourcePos, Parser ()) . first $ const Nothing
     f <- p
-    mspan <- gets @(Maybe SourcePos, Parser ()) fst
-    f . SrcSpan start <$> maybe getSourcePos pure mspan
+    mspan <- gets @(Maybe FullSourcePos, Parser ()) fst
+    f . SrcSpan start <$> maybe getFullSourcePos pure mspan
+
+getFullSourcePos :: Parser FullSourcePos
+getFullSourcePos = FullSourcePos <$> getSourcePos <*> getOffset
 
 -- | Parses a text symbol as a lexeme.
 symbol :: Text -> Parser Text
-symbol t = gets @(Maybe SourcePos, Parser ()) snd >>= flip Lex.symbol t
+symbol t = gets @(Maybe FullSourcePos, Parser ()) snd >>= flip Lex.symbol t
 
 -- | Runs a parser with a whitespace parser that enforces indentation.
 indentGuard :: Parser () -> Ordering -> Pos -> Parser ()
@@ -164,18 +167,18 @@ indentGuard sc ord ref = do
     actual <- Lex.indentLevel
     if compare actual ref == ord
         then pure ()
-        else modify @(Maybe SourcePos, Parser ()) . second . const
+        else modify @(Maybe FullSourcePos, Parser ()) . second . const
             . void $ Lex.incorrectIndent ord ref actual
 
 -- | Runs a parser, requiring all parsed lexemes to be indented.
 lineFold :: Parser a -> Parser a
 lineFold p = do
-    sc <- gets @(Maybe SourcePos, Parser ()) snd
+    sc <- gets @(Maybe FullSourcePos, Parser ()) snd
     sc
     let sc' = indentGuard sc GT $ mkPos 1
-    modify @(Maybe SourcePos, Parser ()) . second $ const sc'
+    modify @(Maybe FullSourcePos, Parser ()) . second $ const sc'
     r <- p
-    modify @(Maybe SourcePos, Parser ()) . second $ const sc
+    modify @(Maybe FullSourcePos, Parser ()) . second $ const sc
     r <$ sc
 
 {-|
