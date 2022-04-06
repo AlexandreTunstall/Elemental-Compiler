@@ -23,6 +23,7 @@ module Language.Elemental.AST.Decl
 import Data.Data (Data)
 import Data.Kind qualified as Kind
 import Data.String (IsString)
+import Data.Text qualified as T
 import Data.Text.Short (ShortText, toText)
 import Prettyprinter (Pretty(pretty), dquotes)
 
@@ -99,7 +100,12 @@ newtype ForeignName = ForeignName { unForeignName :: ShortText }
     deriving newtype (Eq, IsString, Ord, Read, Show)
 
 instance Pretty ForeignName where
-    pretty = dquotes . pretty . toText . unForeignName
+    pretty = dquotes . pretty . T.concatMap escape . toText . unForeignName
+      where
+        escape :: Char -> T.Text
+        escape '\\' = T.pack "\\\\"
+        escape '\"' = T.pack "\\\""
+        escape c = T.pack [c]
 
 -- | Substitutes an expression at an index of a declaration list's scope.
 substituteDeclScope
