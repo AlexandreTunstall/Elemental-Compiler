@@ -1,0 +1,10 @@
+-- Minimal test case that breaks when there are no duplication tags.
+
+foreign primitive pureIO : ∀ 0 → IO 0
+
+foreign export "value" pureValue : IO (∀ 0 → 0)
+
+pureValue = pureIO @(∀ 0 → 0) (Λ λ0 0)
+
+break = pureValue
+

@@ -1,4 +1,6 @@
 *.log
+*.inet
+*.hl
 *.ll
 # Don't ignore optimised outputs; we need them for golden tests
 !*.opt.ll

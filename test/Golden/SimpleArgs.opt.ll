@@ -2,13 +2,13 @@
 source_filename = "test/Golden/SimpleArgs.elem"
 
 ; Function Attrs: norecurse nounwind readnone
-define i1 @snd(i1, i1 returned) local_unnamed_addr #0 {
-  ret i1 %1
+define i1 @main(i1 returned) local_unnamed_addr #0 {
+  ret i1 %0
 }
 
 ; Function Attrs: norecurse nounwind readnone
-define i1 @main(i1 returned) local_unnamed_addr #0 {
-  ret i1 %0
+define i1 @snd(i1, i1 returned) local_unnamed_addr #0 {
+  ret i1 %1
 }
 
 attributes #0 = { norecurse nounwind readnone }

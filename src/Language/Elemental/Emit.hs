@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
@@ -9,598 +8,262 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Functions to convert an Elemental program into an LLVM module.
+-- | Functions to convert an Elemental program into an interaction net.
 module Language.Elemental.Emit
     ( emitProgram
     , emitDeclScope
     , emitDecl
     , emitExpr
-    , emitExprIO
-    , emitExprOp
-    , foldArrow
-    , foldForall
-    , foldIO
-    , foldPointer
-    , llvmType
-    , llvmForeignName
-    , llvmAddress
+    , backendType
+    , backendForeignName
     ) where
 
-import Control.Monad (void)
+import Control.Algebra ((:+:))
+import Control.Carrier.State.Church (State, get, put, runState)
+import Control.Monad.Trans.Class (lift)
+import Data.DList (DList, toList)
+import Data.Functor.Const (Const(..), getConst)
 import Data.Text.Short (toShortByteString)
-import Data.Type.Equality ((:~:)(Refl))
-import Data.Void (absurd)
-import LLVM.AST qualified as LLVM
-import LLVM.AST.CallingConvention qualified as LLVM.CallConv
-import LLVM.AST.Constant qualified as LLVM.Constant
-import LLVM.AST.Type qualified as LLVM.Type
-import Math.NumberTheory.Logarithms (naturalLog2)
 
 import Control.Carrier.ModuleBuilder
-import Control.Effect.IRBuilder
 import Language.Elemental.AST.Decl
 import Language.Elemental.AST.Expr
 import Language.Elemental.AST.Program
 import Language.Elemental.AST.Type
+import Language.Elemental.Backend qualified as Backend
+import Language.Elemental.InteractionNet
 import Language.Elemental.Primitive
 import Language.Elemental.Singleton
 
-
--- | Emits a program as a list of LLVM definitions.
-emitProgram :: Program -> [LLVM.Definition]
-emitProgram (Program decls)
-    = runModuleBuilder const emptyModuleBuilder $ emitDeclScope decls
+-- | Emits a program as an interaction net.
+emitProgram
+    :: HasRewriter sig m => Program -> m [Backend.Named Backend.External]
+emitProgram (Program decls) = toList <$> emitDeclScope SNil SNil decls
 
 -- | Emits a list of declarations.
-emitDeclScope :: Has ModuleBuilder sig m => DeclScope '[] rest -> m ()
-emitDeclScope = \case
-    DeclNil -> pure ()
-    DeclCons decl decls -> do
-        expr <- emitDecl decl
-        case declType SNil decl of
-            SNothing -> emitDeclScope decls
-            SJust t -> emitDeclScope
-                $ substituteDeclScope (t :^ SNil) SZero expr decls
+emitDeclScope
+    :: (HasRewriter sig m)
+    => SList (SType 'Zero) scope -> SList (Const (Ref -> m ())) scope
+    -> DeclScope scope rest -> m (DList (Backend.Named Backend.External))
+emitDeclScope scopeTypes scope = \case
+    DeclNil -> pure mempty
+    DeclCons decl decls -> case declType scopeTypes decl of
+        SNothing -> do
+            exts <- emitDecl scopeTypes scope () decl
+            (exts <>) <$> emitDeclScope scopeTypes scope decls
+        SJust t -> do
+            rn0 <- newNode $ const $ AppNode () () ()
+            rn1 <- newNode $ const $ LamNode () () ()
+            linkNodes (Ref rn0 0) (Ref rn1 0)
+            propagate2 (Ref rn0 2) (Ref rn1 2) DeadNode
+            exts <- emitDecl scopeTypes scope (Const $ Ref rn0 1) decl
+            Ref rn1 1 >=^ scope
+                $ \scope' -> (exts <>)
+                    <$> emitDeclScope (t :^ scopeTypes) scope' decls
 
 {-|
     Emits a declaration, returning the expression to add to the scope if the
     declaration adds anything to the scope.
 -}
 emitDecl
-    :: Has ModuleBuilder sig m
-    => Decl '[] mt -> m (FoldMaybe () (Expr 'Zero '[]) mt)
-emitDecl = \case
-    Binding expr -> pure expr
+    :: (HasRewriter sig m)
+    => SList (SType 'Zero) scope -> SList (Const (Ref -> m ())) scope
+    -> FoldMaybe () (Const Ref) mt -> Decl scope mt
+    -> m (DList (Backend.Named Backend.External))
+emitDecl scopeTypes scope rr = \case
+    Binding expr -> mempty <$ emitExpr scope (getConst rr) expr
     ForeignImport fname t -> do
         let ltargs = sForeignArgs t
-            ltargs' = llvmArgs ltargs
             ltret = sForeignRet t
-            ltret' = llvmType ltret
-        op <- extern (llvmForeignName fname) ltargs' ltret'
-        pure $ wrapImport SZero SNil t $ Call (Right op) [] ltargs ltret
+            name = backendForeignName fname
+        emitExpr scope (getConst rr)
+            $ wrapImport SZero scopeTypes t $ Call name ltargs ltret
+        pure $ pure $ name
+            Backend.:= Backend.External (backendArgs ltargs) (backendType ltret)
     ForeignExport fname expr -> do
-        let t = exprType SZero SNil expr
+        let t = exprType SZero scopeTypes expr
             ltargs = sForeignArgs t
-            ltargs' = llvmArgs ltargs
             ltret = sForeignRet t
-            ltret' = llvmType ltret
-            export ops = applyArgs ltret ltargs ops
-                $ wrapExport SZero SNil t expr
-        _ <- function (llvmForeignName fname) ltargs' ltret' $ emitExpr . export
-        pure ()
-    ForeignPrimitive pfin -> pure $ primitiveExprs !!^ pfin
-    ForeignAddress addr pk t -> pure $ Addr addr pk t
+        freshNums <- traverseSList newNodeIndex ltargs
+        let names = Backend.Name . fromIntegral <$> freshNums
+            ops = zipWith Backend.Reference (backendArgs ltargs) names
+            args = zipWith (Backend.:=) names (backendArgs ltargs)
+        rn1 <- newNode $ const $ RootNode (backendForeignName fname) args ()
+        emitExpr scope (Ref rn1 0) $ applyArgs ltret ltargs ops
+            $ wrapExport SZero scopeTypes t expr
+        pure mempty
+    ForeignPrimitive pfin
+        -> (mempty <$) $ emitExpr scope (getConst rr) $ primitiveExprs !!^ pfin
+    ForeignAddress addr pk (t :: SType 'Zero t) -> let
+        lt :: SType 'Zero ('BackendType (Marshall t))
+        lt = SBackendType $ sMarshall t
+        baddr = Backend.Address (backendType $ sMarshall t) $ getAddress addr
+        li0 = SBackendInt SZero
+        i0 = SBackendType li0
+        in case pk of
+            SReadPointer -> (mempty <$) $ emitExpr scope (getConst rr) $ BindIO
+                :@ lt :$ BackendIO (sMarshall t)
+                    (Backend.Body mempty $ Backend.Load baddr)
+                :@ t :$ Lam lt (PureIO :@ t
+                    :$ marshallIn SZero (lt :^ scopeTypes) t (Var SZero))
+            SWritePointer -> (mempty <$) $ emitExpr scope (getConst rr)
+                $ Lam t $ BindIO
+                :@ i0 :$ (BackendPIO (sMarshall t) li0 (Backend.Store baddr)
+                    :$ marshallOut SZero (t :^ scopeTypes) t (Var SZero))
+                :@ SUnitType :$ Lam i0 (PureIO :@ SUnitType
+                    :$ marshallIn SZero (i0 :^ t :^ scopeTypes) SUnitType
+                        (Var SZero))
   where
-    llvmArgs :: SList SLlvmType lts -> [LLVM.Type]
-    llvmArgs SNil = []
-    llvmArgs (lt :^ lts) = llvmType lt : llvmArgs lts
+    traverseSList :: Applicative f => f a -> SList sing as -> f [a]
+    traverseSList _ SNil = pure []
+    traverseSList f (_ :^ xs) = (:) <$> f <*> traverseSList f xs
 
+    backendArgs :: SList SBackendType lts -> [Backend.Type]
+    backendArgs SNil = []
+    backendArgs (lt :^ lts) = backendType lt : backendArgs lts
+    
     applyArgs
         :: AllIsOpType ltargs ~ 'True
-        => proxy ltret -> SList SLlvmType ltargs -> [LLVM.Operand]
-        -> Expr 'Zero '[] (BuildForeignType ltargs ltret)
-        -> Expr 'Zero '[] ('IOType ('LlvmType ltret))
+        => proxy ltret -> SList SBackendType ltargs -> [Backend.Operand]
+        -> Expr 'Zero scope (BuildForeignType ltargs ltret)
+        -> Expr 'Zero scope ('IOType ('BackendType ltret))
     applyArgs _ SNil [] expr = expr
     applyArgs t (ltarg :^ ltargs) (op : ops) expr
         = withAllIsOpTypeProof ltarg ltargs
         $ applyArgs t ltargs ops
-        $ expr :$ LlvmOperand ltarg op
+        $ expr :$ BackendOperand ltarg op
     applyArgs _ SNil ops _ = error $ "emitDecl: "
         <> show (length ops) <> " excess operands"
     applyArgs _ ltargs [] _ = error $ "emitDecl: "
         <> show (toNatural $ sLength ltargs) <> " missing operands"
 
--- | Emits an expression. This emits a @ret@ instruction.
 emitExpr
-    :: Has IRBuilder sig m => Expr 'Zero '[] ('IOType ('LlvmType lt)) -> m ()
-emitExpr expr = do
-    let SIOType (SLlvmType lt) = exprType SZero SNil expr
-    mop <- toMaybeOp lt <$> emitExprIO expr
-    emitTerm $ LLVM.Ret mop []
-    void block
+    :: forall tscope scope tx sig m. HasRewriter sig m
+    => SList (Const (Ref -> m ())) scope -> Ref -> Expr tscope scope tx -> m ()
+emitExpr scope rr = \case
+    Var vidx -> mkBox vidx >>= getConst (scope !!^ vidx)
+    App ef ex -> do
+        rn1 <- newNode $ const $ AppNode () () ()
+        emitExpr scope (Ref rn1 0) ef
+        emitExpr scope (Ref rn1 1) ex
+        linkNodes rr $ Ref rn1 2
+    TypeApp ef _ -> emitExpr scope rr ef
+    Lam _ ey -> do
+        rn1 <- newNode $ const $ LamNode () () ()
+        Ref rn1 1 >=^ scope $ \scope' -> emitExpr scope' (Ref rn1 2) ey
+        linkNodes rr $ Ref rn1 0
+    TypeLam ex -> emitExpr (coerceScope scope) rr ex
+    Addr addr _ tx -> do
+        rn1 <- newNode $ const $ OperandNode (Backend.Address
+            (backendType $ sMarshall tx) $ getAddress addr) ()
+        linkNodes rr $ Ref rn1 0
+    BackendOperand _ op -> do
+        rn1 <- newNode $ const $ OperandNode op ()
+        linkNodes rr $ Ref rn1 0
+    BackendIO _ body -> do
+        rn1 <- newNode $ const $ IONode body ()
+        linkNodes rr $ Ref rn1 0
+    BackendPIO _ _ pio
+        -> mkLambda rr $ IOPNode (Backend.Partial (SSucc SZero) pio)
+    PureIO -> mkLambda rr Pure0Node
+    BindIO -> mkLambda rr Bind0Node
+    LoadPointer -> do
+        rn1 <- newNode $ const $ LamNode () () ()
+        linkNodes (Ref rn1 1) (Ref rn1 2)
+        linkNodes rr $ Ref rn1 0
+    StorePointer -> do
+        rn1 <- newNode $ const $ LamNode () () ()
+        linkNodes (Ref rn1 1) (Ref rn1 2)
+        linkNodes rr $ Ref rn1 0
+    Call name SNil tret -> do
+        let body = Backend.Body
+                { Backend.bodyInstrs = mempty
+                , Backend.bodyTerm = Backend.Call (backendType tret) name []
+                }
+        propagate1 rr $ IONode body
+    Call name ltargs@(_ :^ _) tret -> do
+        let callp = Backend.Partial len $ withVarargs len
+                $ Backend.Call (backendType tret) name
+            len = sLength ltargs
+        mkLambda rr $ IOPNode callp
+    IsolateBit bidx ssize -> do
+        let opp = Backend.Partial (SSucc SZero) $ mkIsolateBit size bidx'
+            size = fromIntegral $ toNatural ssize
+            bidx' = fromIntegral $ toNatural bidx
+        mkLambda rr $ OperandPNode opp
+    InsertBit ssize -> do
+        let opp = Backend.Partial (SSucc $ SSucc SZero) $ Backend.InsertBit size
+            size = fromIntegral $ toNatural ssize
+        mkLambda rr $ OperandPNode opp
+    TestBit -> mkLambda rr $ Branch0Node 0
   where
-    toMaybeOp :: SLlvmType lt -> LlvmOperandType lt -> Maybe LLVM.Operand
-    toMaybeOp lt op = case sIsOpType lt of
-        SFalse -> Nothing
-        STrue -> Just op
+    coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
+    coerceScope SNil = SNil
+    coerceScope (Const a :^ as) = Const a :^ coerceScope as
 
-{-|
-    Emits an expression. Unlike 'emitExpr', this does not emit a @ret@
-    instruction but instead returns the final operand for the caller to use.
--}
-emitExprIO
-    :: forall lt sig m. Has IRBuilder sig m
-    => Expr 'Zero '[] ('IOType ('LlvmType lt)) -> m (LlvmOperandType lt)
-emitExprIO = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> emitExprIO . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\Refl -> emitExprOp ex)
-        (\_ -> \case {})
-        (\Refl Refl tx ey ty -> foldIO
-            (\Refl lt -> do
-                op <- emitExprIO ey
-                emitExprIO $ ex :$ LlvmOperand lt op)
-            (\ez -> emitExprIO $ ex :$ ez)
-            (\op et ef' -> withProof (subIncElim SZero SZero ty tx Refl)
-                $ emitCondBr op
-                    (BindIO :@ tx :$ et :@ ty :$ ex)
-                    (BindIO :@ tx :$ ef' :@ ty :$ ex))
-            ey)
-        (\Refl Refl _ -> foldPointer
-            (\tx pop -> do
-                let lt = sMarshall tx
-                op <- emitInstr (llvmType lt) $ LLVM.Load True pop Nothing 1 []
-                emitExprOp $ marshallIn SZero SNil tx $ LlvmOperand lt op)
-            ex)
-        (\_ -> \case {})
-        (\case {})
-        (\Refl Refl fop aops (ltarg :^ SNil) ltret -> do
-            aop <- withAllIsOpTypeProof ltarg SNil $ emitExprOp ex
-            emitCall fop (aop : aops) ltret)
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl op ey -> emitCondBr op ey ex)
-        (\op ey ez -> emitCondBr op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (emitExprIO . substituteExprType SZero SNil SZero tx)
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\op ey ez -> emitCondBr op (ey :@ tx) (ez :@ tx))
-        ef
-    LlvmIO _ mop -> mop
-    Call fop aops SNil ltret -> emitCall fop aops ltret
+    withVarargs :: SNat n -> ([a] -> b) -> Backend.FoldArrow n a b
+    withVarargs SZero f = f []
+    withVarargs (SSucc n) f = \x -> withVarargs n $ f . (x :)
+
+    mkBox :: SNat n -> m Ref
+    mkBox SZero = pure rr
+    mkBox (SSucc n) = do
+        r1 <- mkBox n
+        rn2 <- newNode $ const $ BoxNode 0 () ()
+        linkNodes r1 $ Ref rn2 1
+        pure $ Ref rn2 0
+
+    mkIsolateBit :: Int -> Int -> Backend.Operand -> Backend.Operand
+    mkIsolateBit size bidx (Backend.InsertBit _ oph opt)
+        | bidx == 0 = oph
+        | otherwise = mkIsolateBit size (pred bidx) opt
+    mkIsolateBit size bidx op = Backend.IsolateBit size bidx op
+
+(>=^)
+    :: HasRewriter sig m
+    => Ref -> SList (Const (Ref -> m ())) scope
+    -> (forall n. Algebra (State (Ref, Maybe Ref) :+: sig) n
+        => SList (Const (Ref -> n ())) (tx ': scope) -> n r)
+    -> m r
+(r0 >=^ sc) f = runState @(Ref, Maybe Ref) finish (r0, Nothing) $ f
+    $ Const dup :^ sMap (Const . (.) lift . getConst) sc
   where
-    emitCall
-        :: LLVM.CallableOperand -> [LLVM.Operand]
-        -> SLlvmType ltret -> m (LlvmOperandType ltret)
-    emitCall fop aops ltret = case sIsOpType ltret of
-        SFalse -> emitInstrVoid instr
-        STrue -> emitInstr (llvmType ltret) instr
-      where
-        instr = LLVM.Call Nothing LLVM.CallConv.C [] fop
-            ((, []) <$> reverse aops) [] []
+    sMap :: (forall a. f a -> g a) -> SList f as -> SList g as
+    sMap _ SNil = SNil
+    sMap nt (a :^ as) = nt a :^ sMap nt as
 
-    emitCondBr
-        :: LLVM.Operand
-        -> Expr 'Zero '[] ('IOType ('LlvmType lt))
-        -> Expr 'Zero '[] ('IOType ('LlvmType lt))
-        -> m (LlvmOperandType lt)
-    emitCondBr opc et ef = do
-        bt <- fresh
-        bf <- fresh
-        br <- fresh
-        emitTerm $ LLVM.CondBr opc bt bf []
-        emitBlockStart bt
-        opt <- emitExprIO et
-        bt' <- currentBlock
-        emitTerm $ LLVM.Br br []
-        emitBlockStart bf
-        opf <- emitExprIO ef
-        bf' <- currentBlock
-        emitTerm $ LLVM.Br br []
-        emitBlockStart br
-        case sIsOpType lt of
-            SFalse -> pure ()
-            STrue -> emitInstr (llvmType lt)
-                $ LLVM.Phi (llvmType lt) [(opt, bt'), (opf, bf')] []
-      where
-        SIOType (SLlvmType lt) = exprType SZero SNil et
+    dup :: (HasRewriter sig m, Has (State (Ref, Maybe Ref)) sig m)
+        => Ref -> m ()
+    dup r1 = do
+        (r2, mr3) <- get @(Ref, Maybe Ref)
+        case mr3 of
+            Nothing -> put (r2, Just r1)
+            Just r3 -> do
+                rn4 <- newNode $ const $ DupNode 0 mempty () () ()
+                linkNodes r2 $ Ref rn4 0
+                linkNodes r3 $ Ref rn4 1
+                put (Ref rn4 2, Just r1)
 
-{-|
-    Emits a pure LLVM operand.
+    finish :: HasRewriter sig m => (Ref, Maybe Ref) -> r -> m r
+    finish (r1, mr2) r = r <$ maybe (propagate1 r1 DeadNode) (linkNodes r1) mr2
 
-    This still needs an 'IRBuilder' effect because it may need to emit
-    instructions for operand conversion. All instructions emitted by this
-    function do not have any side effects; they may be eliminated by the LLVM
-    optimiser if their result is unused.
--}
-emitExprOp
-    :: forall lt sig m. Has IRBuilder sig m
-    => Expr 'Zero '[] ('LlvmType lt) -> m (LlvmOperandType lt)
-emitExprOp = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> emitExprOp . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl Refl _ _ (_ :^ ltargs) _ -> case ltargs of {})
-        (\Refl Refl bidx size -> do
-            let SLlvmType lt = exprType SZero SNil ex
-                li1 = llvmType $ SLlvmInt $ SSucc SZero
-            op <- withProof (ltRightPredSucc bidx size Refl)
-                $ emitExprOp ex
-            shifted <- emitInstr (llvmType lt) $ LLVM.LShr False op
-                (LLVM.ConstantOperand $ LLVM.Constant.Int
-                    (fromIntegral $ toNatural size)
-                    (fromIntegral $ toNatural bidx)) []
-            emitInstr li1 $ LLVM.Trunc shifted li1 [])
-        (\_ -> \case {})
-        (\Refl Refl size bop -> case sCmpNat size SZero of
-            SLT -> absurd $ zeroNoLT size Refl
-            SEQ -> pure bop
-            SGT -> do
-                iop <- emitExprOp ex
-                let lt = SLlvmInt $ SSucc size
-                    ft = llvmType lt
-                    usize :: Integral n => n
-                    usize = fromIntegral $ toNatural size
-                bext <- emitInstr ft $ LLVM.ZExt bop ft []
-                iext <- emitInstr ft $ LLVM.ZExt iop ft []
-                bsh <- emitInstr ft $ LLVM.Shl False True bext
-                    (LLVM.ConstantOperand $ LLVM.Constant.Int
-                        (usize + 1) usize) []
-                emitInstr ft $ LLVM.Or bsh iext [])
-        (\case {})
-        (\Refl op ey -> emitSelect op ey ex)
-        (\op ey ez -> emitSelect op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (emitExprOp . substituteExprType SZero SNil SZero tx)
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\op ey ez -> emitSelect op (ey :@ tx) (ez :@ tx))
-        ef
-    LlvmOperand _ op -> pure op
-    Call _ _ ltargs _ -> case ltargs of {}
-  where
-    emitSelect
-        :: LLVM.Operand
-        -> Expr 'Zero '[] ('LlvmType lt) -> Expr 'Zero '[] ('LlvmType lt)
-        -> m (LlvmOperandType lt)
-    emitSelect opc et ef = case sIsOpType lt of
-        SFalse -> pure ()
-        STrue -> do
-            opt <- emitExprOp et
-            opf <- emitExprOp ef
-            emitInstr (llvmType lt) $ LLVM.Select opc opt opf []
-      where
-        SLlvmType lt = exprType SZero SNil et
+-- | Converts a t'BackendType' into a backend type in the backend AST.
+backendType :: SBackendType t -> Backend.Type
+backendType (SBackendInt size) = Backend.IntType $ fromIntegral $ toNatural size
 
--- | Folds an arrow using the given continuations for each possible value.
-foldArrow
-    :: forall ta tb sig r m. Has IRBuilder sig m
-    => (SType 'Zero ta -> Expr 'Zero '[ta] tb -> m r)
-    -- ^ Lam
-    -> (tb :~: 'IOType ta -> m r)
-    -- ^ PureIO :@ ta
-    -> (forall tx. ta :~: 'IOType tx -> tb :~: 'Forall ((Increment 'Zero tx
-        :-> 'IOType ('TypeVar 'Zero)) :-> 'IOType ('TypeVar 'Zero))
-        -> SType 'Zero tx -> m r)
-    -- ^ BindIO :@ _
-    -> (forall tx ty. ta :~: 'Arrow tx ('IOType ty) -> tb :~: 'IOType ty
-        -> SType 'Zero tx -> Expr 'Zero '[] ('IOType tx)
-        -> SType 'Zero ty -> m r)
-    -- ^ BindIO :@ _ :$ _ :@ _
-    -> (forall tx. ta :~: 'PointerType 'ReadPointer tx -> tb :~: 'IOType tx
-        -> SType 'Zero tx -> m r)
-    -- ^ LoadPointer :@ _
-    -> (forall tx. ta :~: 'PointerType 'WritePointer tx
-        -> tb :~: (tx :-> 'IOType UnitType) -> SType 'Zero tx -> m r)
-    -- ^ StorePointer :@ _
-    -> (tb :~: 'IOType UnitType
-        -> Expr 'Zero '[] ('PointerType 'WritePointer ta) -> m r)
-    -- ^ StorePointer :@ ta :$ _
-    -> (forall ltarg ltargs ltret. AllIsOpType (ltarg ': ltargs) ~ 'True
-        => ta :~: 'LlvmType ltarg
-        -> tb :~: BuildForeignType ltargs ltret
-        -> LLVM.CallableOperand -> [LLVM.Operand]
-        -> SList SLlvmType (ltarg ': ltargs) -> SLlvmType ltret -> m r)
-    -- ^ Call _ _ _ _
-    -> (forall bidx size. CmpNat bidx size ~ 'LT
-        => ta :~: 'LlvmType ('LlvmInt size)
-        -> tb :~: 'LlvmType ('LlvmInt ('Succ 'Zero))
-        -> SNat bidx -> SNat size -> m r)
-    -- ^ IsolateBit _
-    -> (forall size. ta :~: 'LlvmType ('LlvmInt ('Succ 'Zero))
-        -> tb :~: ('LlvmType ('LlvmInt size)
-            :-> 'LlvmType ('LlvmInt ('Succ size)))
-        -> SNat size -> m r)
-    -- ^ InsertBit _
-    -> (forall size. ta :~: 'LlvmType ('LlvmInt size)
-        -> tb :~: 'LlvmType ('LlvmInt ('Succ size))
-        -> SNat size -> LLVM.Operand -> m r)
-    -- ^ InsertBit _ :$ _
-    -> (tb :~: 'Arrow ta ta -> LLVM.Operand -> m r)
-    -- ^ TestBit _ :@ ta
-    -> (tb :~: ta -> LLVM.Operand -> Expr 'Zero '[] ta -> m r)
-    -- ^ TestBit _ :@ ta :$ _
-    -> (LLVM.Operand -> Expr 'Zero '[] (ta :-> tb)
-        -> Expr 'Zero '[] (ta :-> tb) -> m r)
-    -- ^ TestBit _ :@ ta :-> tb :$ _ :$ _
-    -> Expr 'Zero '[] (ta :-> tb) -> m r
-foldArrow lam pureIO1 bindIO1 bindIO3 loadPointer1 storePointer1 storePointer2
-    call isolateBit insertBit insertBit1 testBit1 testBit2 testBit3 = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> foldArrow lam pureIO1 bindIO1 bindIO3 loadPointer1 storePointer1
-                storePointer2 call isolateBit insertBit insertBit1 testBit1
-                testBit2 testBit3
-            . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\Refl Refl _ -> storePointer2 Refl ex)
-        (\case {})
-        (\Refl Refl fop aops (ltarg :^ ltargs) ltret -> case ltargs of
-            _ :^ _ -> withAllIsOpTypeProof ltarg ltargs $ do
-                aop <- emitExprOp ex
-                call Refl Refl fop (aop : aops) ltargs ltret)
-        (\_ -> \case {})
-        (\Refl Refl size -> emitExprOp ex >>= insertBit1 Refl Refl size)
-        (\_ -> \case {})
-        (\Refl op -> testBit2 Refl op ex)
-        (\Refl op ey -> testBit3 op ey ex)
-        (\op ey ez -> testBit3 op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (foldArrow lam pureIO1 bindIO1 bindIO3 loadPointer1 storePointer1
-                storePointer2 call isolateBit insertBit insertBit1 testBit1
-                testBit2 testBit3
-            . substituteExprType SZero SNil SZero tx)
-        (\Refl -> pureIO1 Refl)
-        (\Refl -> bindIO1 Refl Refl tx)
-        (\Refl ty ex -> withProof (subIncElim SZero SZero tx ty Refl)
-            $ bindIO3 Refl Refl ty ex tx)
-        (\Refl -> loadPointer1 Refl Refl tx)
-        (\Refl -> storePointer1 Refl Refl tx)
-        (\Refl -> testBit1 Refl)
-        (\op ey ez -> testBit3 op (ey :@ tx) (ez :@ tx))
-        ef
-    Lam tx ex -> lam tx ex
-    Call fop aops ltargs@(_ :^ _) ltret -> call Refl Refl fop aops ltargs ltret
-    IsolateBit bidx size -> isolateBit Refl Refl bidx size
-    InsertBit size -> insertBit Refl Refl size
-
--- | Folds a forall using the given continuations for each possible value.
-foldForall
-    :: forall t sig r m. Has IRBuilder sig m
-    => (Expr ('Succ 'Zero) '[] t -> m r)
-    -- ^ TypeLam
-    -> (t :~: ('TypeVar 'Zero :-> 'IOType ('TypeVar 'Zero)) -> m r)
-    -- ^ PureIO
-    -> (t :~: ('IOType ('TypeVar 'Zero) :-> 'Forall (('TypeVar ('Succ 'Zero)
-        :-> 'IOType ('TypeVar 'Zero)) :-> 'IOType ('TypeVar 'Zero))) -> m r)
-    -- ^ BindIO
-    -> (forall tx. t :~: ((Increment 'Zero tx :-> 'IOType ('TypeVar 'Zero))
-        :-> 'IOType ('TypeVar 'Zero))
-        -> SType 'Zero tx -> Expr 'Zero '[] ('IOType tx) -> m r)
-    -- ^ BindIO :@ _ :$ _
-    -> (t :~: ('PointerType 'ReadPointer ('TypeVar 'Zero)
-        :-> 'IOType ('TypeVar 'Zero)) -> m r)
-    -- ^ LoadPointer
-    -> (t :~: ('PointerType 'WritePointer ('TypeVar 'Zero) :-> 'TypeVar 'Zero
-        :-> 'IOType UnitType) -> m r)
-    -- ^ StorePointer
-    -> (t :~: ('TypeVar 'Zero :-> 'TypeVar 'Zero :-> 'TypeVar 'Zero)
-        -> LLVM.Operand -> m r)
-    -- ^ TestBit
-    -> (LLVM.Operand -> Expr 'Zero '[] ('Forall t)
-        -> Expr 'Zero '[] ('Forall t) -> m r)
-    -- ^ TestBit _ :@ Forall t :$ _ :$ _
-    -> Expr 'Zero '[] ('Forall t) -> m r
-foldForall typeLam pureIO bindIO bindIO2 loadPointer storePointer testBit
-    testBit3 = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> foldForall typeLam pureIO bindIO bindIO2 loadPointer
-                storePointer testBit testBit3
-            . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\case {})
-        (\Refl Refl tx -> bindIO2 Refl tx ex)
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl Refl _ _ (_ :^ ltargs) _ -> case ltargs of {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl op ey -> testBit3 op ey ex)
-        (\op ey ez -> testBit3 op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (foldForall typeLam pureIO bindIO bindIO2 loadPointer storePointer
-            testBit testBit3 . substituteExprType SZero SNil SZero tx)
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\op ey ez -> testBit3 op (ey :@ tx) (ez :@ tx))
-        ef
-    TypeLam ex -> typeLam ex
-    PureIO -> pureIO Refl
-    BindIO -> bindIO Refl
-    LoadPointer -> loadPointer Refl
-    StorePointer -> storePointer Refl
-    Call _ _ ltargs _ -> case ltargs of {}
-    TestBit ex -> emitExprOp ex >>= testBit Refl
-
--- | Folds an @IO@ value using the given continuations for each possible value.
-foldIO
-    :: forall t sig r m. Has IRBuilder sig m
-    => (forall lt. t :~: 'LlvmType lt -> SLlvmType lt -> m r)
-    -- ^ LLVM-typed expressions
-    -> (Expr 'Zero '[] t -> m r)
-    -- ^ Pure expressions
-    -> (LLVM.Operand -> Expr 'Zero '[] ('IOType t)
-        -> Expr 'Zero '[] ('IOType t) -> m r)
-    -- ^ TestBit _ :@ IOType t :$ _ :$ _
-    -> Expr 'Zero '[] ('IOType t) -> m r
-foldIO llvmIO pureIO testBit3 = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> foldIO llvmIO pureIO testBit3
-            . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\Refl -> pureIO ex)
-        (\_ -> \case {})
-        (\Refl Refl tx ey ty -> foldIO
-            (\Refl lt -> do
-                op <- emitExprIO ey
-                foldIO llvmIO pureIO testBit3 $ ex :$ LlvmOperand lt op)
-            (\ez -> foldIO llvmIO pureIO testBit3 $ ex :$ ez)
-            (\op et ef' -> foldIO llvmIO pureIO testBit3
-                $ withProof (subIncElim SZero SZero ty tx Refl)
-                $ TestBit (LlvmOperand (SLlvmInt $ SSucc SZero) op)
-                :@ SIOType ty
-                :$ (BindIO :@ tx :$ et :@ ty :$ ex)
-                :$ (BindIO :@ tx :$ ef' :@ ty :$ ex))
-            ey)
-        (\Refl Refl _ -> foldPointer
-            (\tx pop -> do
-                let lt = sMarshall tx
-                op <- emitInstr (llvmType lt) $ LLVM.Load True pop Nothing 1 []
-                pureIO $ marshallIn SZero SNil tx $ LlvmOperand lt op)
-            ex)
-        (\_ -> \case {})
-        (\Refl ey -> foldPointer
-            (\tx pop -> do
-                op <- emitExprOp $ marshallOut SZero SNil tx ex
-                emitInstrVoid $ LLVM.Store True pop op Nothing 1 []
-                pureIO $ TypeLam $ STypeVar SZero :\ Var SZero)
-            ey)
-        (\Refl Refl _ _ (_ :^ SNil) ltret -> llvmIO Refl ltret)
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl op ey -> testBit3 op ey ex)
-        (\op ey ez -> testBit3 op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (foldIO llvmIO pureIO testBit3 . substituteExprType SZero SNil SZero tx)
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\op ey ez -> testBit3 op (ey :@ tx) (ez :@ tx))
-        ef
-    LlvmIO lt _ -> llvmIO Refl lt
-    Call _ _ SNil ltret -> llvmIO Refl ltret
-
--- | Folds a pointer using the given continuations for each possible value.
-foldPointer
-    :: forall pk tx sig r m. Has IRBuilder sig m
-    => ((MarshallableType tx, IsOpType (Marshall tx) ~ 'True)
-        => SType 'Zero tx -> LLVM.Operand -> m r)
-    -> Expr 'Zero '[] ('PointerType pk tx) -> m r
-foldPointer addr = \case
-    Var vidx -> absurd $ zeroNoLT vidx Refl
-    App ef ex -> foldArrow
-        (\tx -> foldPointer addr . substituteExpr SZero (tx :^ SNil) SZero ex)
-        (\case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl Refl _ _ (_ :^ ltargs) _ -> case ltargs of {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\_ -> \case {})
-        (\case {})
-        (\Refl op ey -> emitSelect' op ey ex)
-        (\op ey ez -> emitSelect' op (ey :$ ex) (ez :$ ex))
-        ef
-    TypeApp ef tx -> foldForall
-        (foldPointer addr . substituteExprType SZero SNil SZero tx)
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\case {})
-        (\op ey ez -> emitSelect' op (ey :@ tx) (ez :@ tx))
-        ef
-    Addr addr' _ tx -> addr tx $ llvmAddress (sMarshall tx) addr'
-    Call _ _ ltargs _ -> case ltargs of {}
-  where
-    emitSelect'
-        :: LLVM.Operand
-        -> Expr 'Zero '[] ('PointerType pk tx)
-        -> Expr 'Zero '[] ('PointerType pk tx)
-        -> m r
-    emitSelect' opc et ef = foldPointer (\_ opt -> foldPointer (\_ opf -> do
-        opr <- emitInstr (llvmType $ sMarshall tx)
-            $ LLVM.Select opc opt opf []
-        addr tx opr
-        ) ef) et
-      where
-        SPointerType _ tx = exprType SZero SNil et
-
--- | Converts an t'LlvmType' into an LLVM type in the LLVM AST.
-llvmType :: SLlvmType t -> LLVM.Type
-llvmType = \case
-    SLlvmInt size -> case sCmpNat size SZero of
-        SLT -> absurd $ zeroNoLT size Refl
-        SEQ -> LLVM.VoidType
-        SGT -> LLVM.IntegerType $ fromIntegral $ toNatural size
-
--- | Converts a foreign name to a name in the LLVM AST.
-llvmForeignName :: ForeignName -> LLVM.Name
-llvmForeignName (ForeignName t) = LLVM.Name $ toShortByteString t
-
-{-|
-    Converts an address to an LLVM operand representing that address. The given
-    t'LlvmType' is used to determine the type of the operand.
--}
-llvmAddress :: SLlvmType lt -> Address -> LLVM.Operand
-llvmAddress lt (Address addr) = LLVM.ConstantOperand
-    $ LLVM.Constant.IntToPtr (LLVM.Constant.Int (log2 addr) $ fromIntegral addr)
-    $ LLVM.Type.ptr $ llvmType lt
-  where
-    log2 0 = error "Address is 0"
-    log2 n = fromIntegral $ naturalLog2 n + 1
+-- | Converts a foreign name to a name in the backend AST.
+backendForeignName :: ForeignName -> Backend.Name
+backendForeignName (ForeignName t) = Backend.ExternalName $ toShortByteString t
 
 -- GHC gives a nonexhaustive pattern warning if this is inlined. :/
 -- | Calls a continuation with a proof relating 'AllIsOpType' and 'IsOpType'.
 withAllIsOpTypeProof
-    :: AllIsOpType (lt ': lts) ~ 'True => SLlvmType lt -> proxy lts
+    :: AllIsOpType (lt ': lts) ~ 'True => SBackendType lt -> proxy lts
     -> ((IsOpType lt ~ 'True, AllIsOpType lts ~ 'True) => r')
     -> r'
 withAllIsOpTypeProof lt _ x = case sIsOpType lt of
     STrue -> x
+

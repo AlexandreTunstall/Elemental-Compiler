@@ -1,0 +1,17 @@
+foreign export "main1" main1 : IO (∀ 0 → 0 → 0)
+foreign export "main2" main2 : IO (∀ 0 → 0 → 0)
+
+foreign import c_getbit "getbit" : IO (∀ 0 → 0 → 0)
+
+foreign primitive pureIO : ∀ 0 → IO 0
+foreign primitive bindIO : ∀ IO 0 → ∀ (1 → IO 0) → IO 0
+
+main1 = shared (pureIO @(∀ 0 → 0 → 0))
+main2 = shared (λ(∀ 0 → 0 → 0) pureIO @(∀ 0 → 0 → 0) (not 0))
+
+shared = λ((∀ 0 → 0 → 0) → IO (∀ 0 → 0 → 0)) bindIO
+    @(∀ 0 → 0 → 0) c_getbit
+    @(∀ 0 → 0 → 0) 0
+
+not = λ(∀ 0 → 0 → 0) Λ λ0 λ0 2 @0 0 1
+

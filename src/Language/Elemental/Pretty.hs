@@ -10,7 +10,7 @@ module Language.Elemental.Pretty
     ( prettyDecl
     , prettyExpr
     , prettyType
-    , prettyLlvmType
+    , prettyBackendType
     , prettyNat
     -- * Unchecked
     , prettyUProgramF
@@ -73,20 +73,21 @@ prettyExpr = flip $ \case
     Lam tx ey -> withPrec 0 $ "λ" <> prettyType 2 tx <+> prettyExpr 0 ey
     TypeLam ex -> withPrec 0 $ "Λ" <+> prettyExpr 0 ex
     Addr addr _ _ -> withPrec 3 $ braces $ "addr" <+> pretty addr
-    LlvmOperand lt _ -> withPrec 3 $ braces $ "op" <+> prettyLlvmType lt
-    LlvmIO lt _ -> withPrec 3 $ braces $ "io op" <+> prettyLlvmType lt
+    BackendOperand lt _ -> withPrec 3 $ braces $ "op" <+> prettyBackendType lt
+    BackendIO lt _ -> withPrec 3 $ braces $ "io op" <+> prettyBackendType lt
+    BackendPIO lt _ _ -> withPrec 3 $ braces $ "iop op" <+> prettyBackendType lt
     PureIO -> withPrec 3 $ braces "pureIO"
     BindIO -> withPrec 3 $ braces "bindIO"
     LoadPointer -> withPrec 3 $ braces "loadPointer"
     StorePointer -> withPrec 3 $ braces "storePointer"
-    Call _ _ ltargs ltret -> withPrec 3 $ braces $ "call"
-        <+> prettyLlvmType ltret <> parens (concatWith (surround ", ")
-            $ demoteList prettyLlvmType ltargs)
+    Call _ ltargs ltret -> withPrec 3 $ braces $ "call"
+        <+> prettyBackendType ltret <> parens (concatWith (surround ", ")
+            $ demoteList prettyBackendType ltargs)
     IsolateBit bidx size -> withPrec 3 $ braces $ "isolate"
-        <+> prettyNat bidx <+> prettyLlvmType (SLlvmInt size)
+        <+> prettyNat bidx <+> prettyBackendType (SBackendInt size)
     InsertBit size -> withPrec 3 $ braces
-        $ "insert" <+> prettyLlvmType (SLlvmInt size)
-    TestBit ex -> withPrec 3 $ braces $ "testBit" <+> prettyExpr 0 ex
+        $ "insert" <+> prettyBackendType (SBackendInt size)
+    TestBit -> withPrec 3 $ braces "testBit"
 
 -- | Prettyprints a type with the given precedence.
 prettyType :: Int -> SType tscope t -> Doc ann
@@ -98,12 +99,12 @@ prettyType = flip $ \case
     SPointerType pk tx -> withPrec 1 $ case pk of
         SReadPointer -> "ReadPointer" <+> prettyType 2 tx
         SWritePointer -> "WritePointer" <+> prettyType 2 tx
-    SLlvmType lt -> withPrec 3 $ prettyLlvmType lt
+    SBackendType lt -> withPrec 3 $ prettyBackendType lt
 
--- | Prettyprints an t'LlvmType'.
-prettyLlvmType :: SLlvmType lt -> Doc ann
-prettyLlvmType = \case
-    SLlvmInt size -> "i" <> prettyNat size
+-- | Prettyprints a t'BackendType'.
+prettyBackendType :: SBackendType lt -> Doc ann
+prettyBackendType = \case
+    SBackendInt size -> "i" <> prettyNat size
 
 -- | Prettyprints a 'Nat'.
 prettyNat :: SNat nat -> Doc ann

@@ -57,10 +57,12 @@ function
     -- ^ The types of the function arguments.
     -> Type
     -- ^ The return type of the function.
+    -> Linkage
+    -- ^ The linkage of the function.
     -> ([Operand] -> IRBuilderC m ())
     -- ^ A function that builds the function's basic blocks from its arguments.
     -> m Operand
-function nm argTys retTy body = do
+function nm argTys retTy link body = do
     (blocks, paramNames) <- runIRBuilder emptyIRBuilder $ do
         paramNames <- traverse (const fresh) argTys
         body $ zipWith LocalReference argTys paramNames
@@ -71,6 +73,7 @@ function nm argTys retTy body = do
                 = (($ []) <$> zipWith Parameter argTys paramNames, False)
             , returnType = retTy
             , basicBlocks = blocks
+            , linkage = link
             }
         funTy = ptr $ FunctionType retTy argTys False
     ConstantOperand (GlobalReference funTy nm) <$ emitDefn def

@@ -367,6 +367,9 @@ isIdentifierChar = \case
     '@' -> False
     '(' -> False
     ')' -> False
+    ';' -> False
+    '{' -> False
+    '}' -> False
     c -> isLetter c || isMark c || isNumber c || isPunctuation c || isSymbol c
 
 -- MTL boilerplate

@@ -46,8 +46,11 @@ propParseDecl = property $ do
 propParseUProgram :: Property
 propParseUProgram = property $ do
     program <- forAllWith (show . prettyUProgram) $ genUProgram 5 5
-    tripping' program enc dec
+    tripping' show1 T.unpack show3 program enc dec
   where
+    show1 = show . prettyUProgram
+    show3 = either id show1
+
     enc :: UProgram -> T.Text
     enc = renderStrict . layoutPretty defaultLayoutOptions . prettyUProgram
 

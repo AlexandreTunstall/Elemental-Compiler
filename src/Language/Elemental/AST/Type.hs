@@ -18,8 +18,8 @@ module Language.Elemental.AST.Type
     , SType(..)
     , PointerKind(..)
     , SPointerKind(..)
-    , LlvmType(..)
-    , SLlvmType(..)
+    , BackendType(..)
+    , SBackendType(..)
     -- * Synonyms
     , UnitType
     , pattern SUnitType
@@ -62,8 +62,8 @@ data Type
     | IOType Type
     -- | A pointer to data of the contained type.
     | PointerType PointerKind Type
-    -- | An LLVM operand of the given type. This is an internal type.
-    | LlvmType LlvmType
+    -- | A backend operand of the given type. This is an internal type.
+    | BackendType BackendType
 
 {-|
     Singleton for 'Type'. Used to witness an Elemental type at runtime.
@@ -83,8 +83,8 @@ data SType scope t where
     -- | Singleton constructor for 'PointerType'.
     SPointerType
         :: SPointerKind pk -> SType scope tx -> SType scope ('PointerType pk tx)
-    -- | Singleton constructor for v'LlvmType'.
-    SLlvmType :: SLlvmType lt -> SType scope ('LlvmType lt)
+    -- | Singleton constructor for v'BackendType'.
+    SBackendType :: SBackendType lt -> SType scope ('BackendType lt)
 
 {-|
     The kind of pointer kinds in the AST. Used to annotate pointers with
@@ -105,16 +105,16 @@ data SPointerKind pk where
     -- | Singleton constructor for 'WritePointer'.
     SWritePointer :: SPointerKind 'WritePointer
 
--- | The subset of LLVM types used internally when emitting LLVM.
-newtype LlvmType
-    -- | An LLVM integer of the given size. A size of 0 is used for @void@.
-    = LlvmInt Nat
+-- | The subset of Backend types used internally when emitting.
+newtype BackendType
+    -- | A backend integer of the given size.
+    = BackendInt Nat
 
--- | Singleton for t'LlvmType'. Used to witness an LLVM type at runtime.
-type SLlvmType :: LlvmType -> Kind.Type
-data SLlvmType lt where
-    -- | Singleton constructor for 'LlvmInt'.
-    SLlvmInt :: SNat size -> SLlvmType ('LlvmInt size)
+-- | Singleton for t'BackendType'. Used to witness a backend type at runtime.
+type SBackendType :: BackendType -> Kind.Type
+data SBackendType lt where
+    -- | Singleton constructor for 'BackendInt'.
+    SBackendInt :: SNat size -> SBackendType ('BackendInt size)
 
 -- | The Elemental unit type. Used to encode a @void@ return in the FFI.
 type UnitType = 'Forall ('TypeVar 'Zero :-> 'TypeVar 'Zero)
@@ -159,7 +159,7 @@ type family Increment idx t where
     Increment idx ('Forall tx) = 'Forall (Increment ('Succ idx) tx)
     Increment idx ('IOType tx) = 'IOType (Increment idx tx)
     Increment idx ('PointerType pk tx) = 'PointerType pk (Increment idx tx)
-    Increment _ ('LlvmType lt) = 'LlvmType lt
+    Increment _ ('BackendType lt) = 'BackendType lt
 
 -- | Singleton version of 'Increment'.
 sIncrement
@@ -176,7 +176,7 @@ sIncrement scope idx = \case
     SForall tx -> SForall $ sIncrement (SSucc scope) (SSucc idx) tx
     SIOType tx -> SIOType $ sIncrement scope idx tx
     SPointerType pk tx -> SPointerType pk $ sIncrement scope idx tx
-    SLlvmType lt -> SLlvmType lt
+    SBackendType lt -> SBackendType lt
 
 {-|
     Substitutes a type at the given index. The first type is the substituted
@@ -193,7 +193,7 @@ type family Substitute idx tsub t where
     Substitute idx tsub ('IOType tx) = 'IOType (Substitute idx tsub tx)
     Substitute idx tsub ('PointerType pk tx)
         = 'PointerType pk (Substitute idx tsub tx)
-    Substitute idx tsub ('LlvmType lt) = 'LlvmType lt
+    Substitute idx tsub ('BackendType lt) = 'BackendType lt
 
 -- | Singleton version of 'Substitute'.
 sSubstitute
@@ -217,7 +217,7 @@ sSubstitute scope idx tsub = \case
         $ sSubstitute (SSucc scope) (SSucc idx) (sIncrement scope SZero tsub) tx
     SIOType tx -> SIOType $ sSubstitute scope idx tsub tx
     SPointerType pk tx -> SPointerType pk $ sSubstitute scope idx tsub tx
-    SLlvmType lt -> SLlvmType lt
+    SBackendType lt -> SBackendType lt
 
 -- | Proof for transposing two increments.
 incInc
@@ -252,7 +252,7 @@ incInc scope idx1 idx2 t lt@Refl = case t of
         -> withProof (incInc (SSucc scope) (SSucc idx1) (SSucc idx2) tx lt) Refl
     SIOType tx -> withProof (incInc scope idx1 idx2 tx lt) Refl
     SPointerType _ tx -> withProof (incInc scope idx1 idx2 tx lt) Refl
-    SLlvmType _ -> Refl
+    SBackendType _ -> Refl
 {-# RULES "Proof/incInc" incInc
     = \_ _ _ _ -> Unsafe.unsafeCoerce #-}
 {-# INLINE [1] incInc #-}
@@ -286,7 +286,7 @@ incSub scope sidx iidx tsub t slt@Refl ilt = case t of
         $ withProof (incInc scope iidx SZero tsub Refl) Refl
     SIOType tx -> withProof (incSub scope sidx iidx tsub tx slt ilt) Refl
     SPointerType _ tx -> withProof (incSub scope sidx iidx tsub tx slt ilt) Refl
-    SLlvmType _ -> Refl
+    SBackendType _ -> Refl
 {-# RULES "Proof/incSub" incSub
     = \_ _ _ _ _ _ -> Unsafe.unsafeCoerce #-}
 {-# INLINE [1] incSub #-}
@@ -325,7 +325,7 @@ subInc scope idx1 idx2 tsub t lt1@Refl lt2@Refl = case t of
             (sIncrement scope SZero tsub) tx lt1 lt2) Refl
     SIOType tx -> withProof (subInc scope idx1 idx2 tsub tx lt1 lt2) Refl
     SPointerType _ tx -> withProof (subInc scope idx1 idx2 tsub tx lt1 lt2) Refl
-    SLlvmType _ -> Refl
+    SBackendType _ -> Refl
 {-# RULES "Proof/subInc" subInc
     = \_ _ _ _ _ _ -> Unsafe.unsafeCoerce #-}
 {-# INLINE [1] subInc #-}
@@ -368,7 +368,7 @@ subSub scope idx1 idx2 tsub1 tsub2 t lt1@Refl lt2@Refl = case t of
     SIOType tx -> withProof (subSub scope idx1 idx2 tsub1 tsub2 tx lt1 lt2) Refl
     SPointerType _ tx
         -> withProof (subSub scope idx1 idx2 tsub1 tsub2 tx lt1 lt2) Refl
-    SLlvmType _ -> Refl
+    SBackendType _ -> Refl
 {-# RULES "Proof/subSub" subSub
     = \_ _ _ _ _ _ _ -> Unsafe.unsafeCoerce #-}
 {-# INLINE [1] subSub #-}
@@ -391,7 +391,7 @@ subIncElim scope idx tsub t lt = case t of
             (Proxy @(Increment 'Zero tsub)) tx lt) Refl
     SIOType tx -> withProof (subIncElim scope idx tsub tx lt) Refl
     SPointerType _ tx -> withProof (subIncElim scope idx tsub tx lt) Refl
-    SLlvmType _ -> Refl
+    SBackendType _ -> Refl
 {-# RULES "Proof/subIncElim" subIncElim
     = \_ _ _ _ -> Unsafe.unsafeCoerce #-}
 {-# INLINE [1] subIncElim #-}
