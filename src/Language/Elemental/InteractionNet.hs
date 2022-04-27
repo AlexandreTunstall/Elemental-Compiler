@@ -76,6 +76,7 @@ import Data.DList (DList, toList)
 import Data.Foldable (find)
 import Data.IntMap.Strict qualified as IM
 import Data.IntSet qualified as IS
+import Data.List (nub)
 import Data.Map.Lazy qualified as M
 import Data.Maybe (fromMaybe)
 import Data.Tuple (swap)
@@ -778,7 +779,7 @@ shareBranch2B lvl0 lvl1 re opc nbt r0 r1 r2 r3 = case sharePreaction' nbt of
         linkNodes r3 $ Ref rn7 0
     Just (name, sb) -> do
         let names = preactionNames nbt
-            extraArgs = sb ^.. B.bodyFreeRefs
+            extraArgs = nub $ sb ^.. B.bodyFreeRefs
             args = M.assocs re
             args' = uncurry (B.:=)
                 <$> (swap <$> extraArgs)
@@ -855,7 +856,7 @@ sharePreaction append w1 w2 mk lvl re nbs r0 r1 r2 = case sharePreaction' nbs of
         linkNodes r2 $ Ref rn5 0
     Just (name, sb) -> do
         let names = preactionNames nbs
-            extraArgs = sb ^.. B.bodyFreeRefs
+            extraArgs = nub $ sb ^.. B.bodyFreeRefs
             args = M.assocs re
             args' = uncurry (B.:=)
                 <$> (swap <$> extraArgs)
