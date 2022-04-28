@@ -160,8 +160,10 @@ data INetF a
     | Branch1Node Level B.Operand a a
     -- | (IO a, a, IO a)
     | Branch2BNode Level B.Operand Preaction a a a
-    -- | (IO (a -> b), a, b, IO (a -> b))
-    | Branch2PNode Level B.Operand a a a a
+    -- | (IO (a -> b), a -> b, IO (a -> b))
+    | Branch2PNode Level B.Operand a a a
+    -- | (IO (a -> b), a -> b, a -> b)
+    | Branch3PNode Level B.Operand a a a
     deriving stock (Foldable, Functor, Traversable)
 
 instance Pretty a => Pretty (INetF a) where
@@ -193,9 +195,12 @@ instance Pretty a => Pretty (INetF a) where
     pretty (Branch2BNode lvl opc nbt r0 r1 r2)
         = "Branch2B" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
         <+> pretty opc <> nest 4 (line <> pretty nbt)
-    pretty (Branch2PNode lvl opc r0 r1 r2 r3)
+    pretty (Branch2PNode lvl opc r0 r1 r2)
         = "Branch2P" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
-        <+> pretty r3 <+> pretty opc
+        <+> pretty opc
+    pretty (Branch3PNode lvl opc r0 r1 r2)
+        = "Branch3P" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
+        <+> pretty opc
 
 instance Ixed (INetF a) where
     ix idx f = indexing traverse $ Indexed go
@@ -306,8 +311,8 @@ reduce = try *> lintFinal
 reduceNode
     :: (HasRewriter sig m, Has (Writer (DList (B.Named B.Function))) sig m)
     => INetF Ref -> INetF Ref -> m ()
-reduceNode (AppNode _ r0 r1) (AppNode _ r2 r3)
-    = linkNodes r0 r1 *> linkNodes r2 r3
+-- reduceNode (AppNode _ r0 r1) (AppNode _ r2 r3)
+--     = linkNodes r0 r2 *> linkNodes r1 r3
 reduceNode (AppNode _ r0 r1) (LamNode _ r2 r3) = do
     rn4 <- newNode $ const $ BoxNode 0 () ()
     rn5 <- newNode $ const $ BoxNode 0 () ()
@@ -324,6 +329,7 @@ reduceNode (LamNode _ r0 r1) (DupNode lvl re _ r2 r3)
 reduceNode n0@DupNode {} n1@LamNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl1 re1 _ r0 r1) (DupNode lvl2 re2 _ r2 r3)
     | lvl1 == lvl2 = linkNodes r0 r2 *> linkNodes r1 r3
+    | lvl1 == 10 && lvl2 == 11 || lvl1 == 11 && lvl2 == 10 = linkNodes r0 r2 *> linkNodes r1 r3
     | otherwise = commute2 (DupNode lvl1 re1) (DupNode lvl2 re2) r0 r1 r2 r3
 reduceNode (AppNode _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@AppNode {} = reduceNode n1 n0
@@ -374,6 +380,14 @@ reduceNode (Pure0Node _ r0) (LamNode _ r1 r2) = do
     linkNodes r1 $ Ref rn4 1
     linkNodes r2 $ Ref rn4 2
 reduceNode n0@LamNode {} n1@Pure0Node {} = reduceNode n1 n0
+reduceNode (Pure0Node _ r0) (Branch3PNode lvl opc _ r1 r2) = do
+    rn3 <- newNode $ const $ IOContNode mempty () ()
+    rn4 <- newNode $ const $ Branch3PNode lvl opc () () ()
+    linkNodes (Ref rn3 1) (Ref rn4 0)
+    linkNodes r0 $ Ref rn3 0
+    linkNodes r1 $ Ref rn4 1
+    linkNodes r2 $ Ref rn4 2
+reduceNode n0@Branch3PNode {} n1@Pure0Node {} = reduceNode n1 n0
 reduceNode (Pure0Node _ r0) (OperandNode op _)
     = propagate1 r0 $ IONode $ B.Body mempty $ B.Pure op
 reduceNode n0@OperandNode {} n1@Pure0Node {} = reduceNode n1 n0
@@ -423,15 +437,39 @@ reduceNode n0@IOContNode {} n1@Bind1Node {} = reduceNode n1 n0
 reduceNode (Branch0Node lvl _ r0) (OperandNode op _)
     = mkLambda r0 $ Branch1Node lvl op
 reduceNode n0@OperandNode {} n1@Branch0Node {} = reduceNode n1 n0
-reduceNode (Branch1Node lvl op _ r0) (LamNode _ r1 r2) = do
-    rn3 <- newNode $ const $ Branch2PNode lvl op () () () ()
+reduceNode (Branch1Node lvl op _ r0) (AppNode _ r1 r2) = do
+    rn3 <- newNode $ const $ Branch2PNode lvl op () () ()
     rn4 <- newNode $ const $ LamNode () () ()
+    rn5 <- newNode $ const $ AppNode () () ()
     linkNodes (Ref rn3 0) (Ref rn4 1)
-    linkNodes (Ref rn3 3) (Ref rn4 2)
+    linkNodes (Ref rn3 1) (Ref rn5 0)
+    linkNodes (Ref rn3 2) (Ref rn4 2)
     linkNodes r0 $ Ref rn4 0
-    linkNodes r1 $ Ref rn3 1
-    linkNodes r2 $ Ref rn3 2
+    linkNodes r1 $ Ref rn5 1
+    linkNodes r2 $ Ref rn5 2
+reduceNode n0@AppNode {} n1@Branch1Node {} = reduceNode n1 n0
+reduceNode (Branch1Node lvl op _ r0) (LamNode _ r1 r2) = do
+    rn3 <- newNode $ const $ Branch2PNode lvl op () () ()
+    rn4 <- newNode $ const $ LamNode () () ()
+    rn5 <- newNode $ const $ LamNode () () ()
+    linkNodes (Ref rn3 0) (Ref rn4 1)
+    linkNodes (Ref rn3 1) (Ref rn5 0)
+    linkNodes (Ref rn3 2) (Ref rn4 2)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn5 1
+    linkNodes r2 $ Ref rn5 2
 reduceNode n0@LamNode {} n1@Branch1Node {} = reduceNode n1 n0
+reduceNode (Branch1Node lvl0 opc0 _ r0) (Branch3PNode lvl1 opc1 _ r1 r2) = do
+    rn3 <- newNode $ const $ Branch2PNode lvl0 opc0 () () ()
+    rn4 <- newNode $ const $ LamNode () () ()
+    rn5 <- newNode $ const $ Branch3PNode lvl1 opc1 () () ()
+    linkNodes (Ref rn3 0) (Ref rn4 1)
+    linkNodes (Ref rn3 1) (Ref rn5 0)
+    linkNodes (Ref rn3 2) (Ref rn4 2)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn5 1
+    linkNodes r2 $ Ref rn5 2
+reduceNode n0@Branch3PNode {} n1@Branch1Node {} = reduceNode n1 n0
 reduceNode (Branch1Node _ opc _ r0) (OperandNode opt _) = mkLambda r0
     $ OperandPNode $ B.Partial (SSucc SZero) $ mkSelect opc opt
 reduceNode n0@OperandNode {} n1@Branch1Node {} = reduceNode n1 n0
@@ -454,20 +492,40 @@ reduceNode (Branch2BNode lvl op nbs1 _ r0 r1) (IOContNode nbs2 _ r2) = do
     linkNodes r1 $ Ref rn5 0
     linkNodes r2 $ Ref rn4 1
 reduceNode n0@IOContNode {} n1@Branch2BNode {} = reduceNode n1 n0
-reduceNode (Branch2PNode lvl opc _ r0 r1 r2) (LamNode _ r3 r4) = do
-    rn4 <- newNode $ const $ Branch1Node lvl opc () ()
-    rn5 <- newNode $ const $ AppNode () () ()
-    rn6 <- newNode $ const $ DupNode lvl mempty () () ()
-    rn7 <- newNode $ const $ LamNode () () ()
-    linkNodes (Ref rn4 1) (Ref rn5 0)
-    linkNodes (Ref rn5 2) (Ref rn7 2)
-    linkNodes (Ref rn6 0) (Ref rn7 1)
-    linkNodes r0 $ Ref rn6 1
+reduceNode (Branch2PNode lvl opc _ r0 r1) (LamNode _ r2 r3) = do
+    rn4 <- newNode $ const $ Branch3PNode lvl opc () () ()
+    rn5 <- newNode $ const $ LamNode () () ()
+    linkNodes (Ref rn4 2) (Ref rn5 0)
+    linkNodes r0 $ Ref rn4 1
     linkNodes r1 $ Ref rn4 0
-    linkNodes r2 $ Ref rn7 0
-    linkNodes r3 $ Ref rn6 2
-    linkNodes r4 $ Ref rn5 1
+    linkNodes r2 $ Ref rn5 1
+    linkNodes r3 $ Ref rn5 2
 reduceNode n0@LamNode {} n1@Branch2PNode {} = reduceNode n1 n0
+reduceNode (Branch2PNode lvl0 opc0 _ r0 r1) (Branch3PNode lvl1 opc1 _ r2 r3) = do
+    rn4 <- newNode $ const $ Branch3PNode lvl0 opc0 () () ()
+    rn5 <- newNode $ const $ Branch3PNode lvl1 opc1 () () ()
+    linkNodes (Ref rn4 2) (Ref rn5 0)
+    linkNodes r0 $ Ref rn4 1
+    linkNodes r1 $ Ref rn4 0
+    linkNodes r2 $ Ref rn5 1
+    linkNodes r3 $ Ref rn5 2
+reduceNode n0@Branch3PNode {} n1@Branch2PNode {} = reduceNode n1 n0
+reduceNode (Branch3PNode lvl opc _ r0 r1) (AppNode _ r2 r3) = do
+    rn4 <- newNode $ const $ AppNode () () ()
+    rn5 <- newNode $ const $ AppNode () () ()
+    rn6 <- newNode $ const $ DupNode 0 mempty () () ()
+    rn7 <- newNode $ const $ Branch1Node lvl opc () ()
+    rn8 <- newNode $ const $ AppNode () () ()
+    linkNodes (Ref rn4 1) (Ref rn6 1)
+    linkNodes (Ref rn5 1) (Ref rn6 2)
+    linkNodes (Ref rn4 2) (Ref rn7 0)
+    linkNodes (Ref rn5 2) (Ref rn8 1)
+    linkNodes (Ref rn7 1) (Ref rn8 0)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn5 0
+    linkNodes r2 $ Ref rn6 0
+    linkNodes r3 $ Ref rn8 2
+reduceNode n0@AppNode {} n1@Branch3PNode {} = reduceNode n1 n0
 -- FFI Duplication
 reduceNode (DupNode _ re _ r0 r1) (OperandNode op _)
     = copyIO1 r0 r1 OperandNode B.renameOp re op
@@ -499,12 +557,18 @@ reduceNode n0@Branch1Node {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl0 re _ r0 r1) (Branch2BNode lvl1 opc nbt _ r2 r3)
     = shareBranch2B lvl0 lvl1 re opc nbt r0 r1 r2 r3
 reduceNode n0@Branch2BNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl0 re _ r0 r1) (Branch2PNode lvl1 op _ r2 r3 r4)
-    = commute3' (DupNode lvl0 re)
+reduceNode (DupNode lvl0 re _ r0 r1) (Branch2PNode lvl1 op _ r2 r3)
+    = commute2' (DupNode lvl0 re) (DupNode lvl0 re)
         (Branch2PNode lvl1 $ B.renameOp (M.map fst re) op)
         (Branch2PNode lvl1 $ B.renameOp (M.map snd re) op)
-        r0 r1 r2 r3 r4
+        r0 r1 r2 r3
 reduceNode n0@Branch2PNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode lvl0 re _ r0 r1) (Branch3PNode lvl1 op _ r2 r3)
+    = commute2' (DupNode lvl0 re) (DupNode lvl0 re)
+        (Branch3PNode lvl1 $ B.renameOp (M.map fst re) op)
+        (Branch3PNode lvl1 $ B.renameOp (M.map snd re) op)
+        r0 r1 r2 r3
+reduceNode n0@Branch3PNode {} n1@DupNode {} = reduceNode n1 n0
 -- FFI Dead
 reduceNode (OperandNode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@OperandNode {} = reduceNode n1 n0
@@ -526,8 +590,8 @@ reduceNode (Branch1Node _ _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Branch1Node {} = reduceNode n1 n0
 reduceNode (Branch2BNode _ _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Branch2BNode {} = reduceNode n1 n0
-reduceNode (Branch2PNode _ _ _ r0 r1 r2) (DeadNode _)
-    = propagate3 r0 r1 r2 DeadNode
+reduceNode (Branch2PNode _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode (Branch3PNode _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Branch2PNode {} = reduceNode n1 n0
 -- FFI Book-keeping
 reduceNode (RootNode name args _) (BoxNode _ _ r0)
@@ -570,11 +634,16 @@ reduceNode (Branch2BNode lvl0 opc nbt _ r0 r1) (BoxNode lvl1 _ r2) = commute1
     (BoxNode lvl1)
     r0 r1 r2
 reduceNode n0@BoxNode {} n1@Branch2BNode {} = reduceNode n1 n0
-reduceNode (Branch2PNode lvl0 opc _ r0 r1 r2) (BoxNode lvl1 _ r3) = commute1b
+reduceNode (Branch2PNode lvl0 opc _ r0 r1) (BoxNode lvl1 _ r2) = commute1
     (Branch2PNode (if lvl0 < lvl1 then lvl0 else succ lvl0) opc)
     (BoxNode lvl1)
-    r0 r1 r2 r3
+    r0 r1 r2
 reduceNode n0@BoxNode {} n1@Branch2PNode {} = reduceNode n1 n0
+reduceNode (Branch3PNode lvl0 opc _ r0 r1) (BoxNode lvl1 _ r2) = commute1
+    (Branch3PNode (if lvl0 < lvl1 then lvl0 else succ lvl0) opc)
+    (BoxNode lvl1)
+    r0 r1 r2
+reduceNode n0@BoxNode {} n1@Branch3PNode {} = reduceNode n1 n0
 reduceNode n0 n1 = error . show
     $ "unexpected node pairing" <> line <> pretty n0 <> line <> pretty n1
 {-# INLINABLE reduceNode #-}
@@ -614,24 +683,6 @@ commute1' mk1 mk2a mk2b r0 r1 r2 = do
     linkNodes r2 $ Ref rn5 0
 {-# INLINABLE commute1' #-}
 
-commute1b
-    :: HasRewriter sig m
-    => (() -> () -> () -> () -> INetF ()) -> (() -> () -> INetF ())
-    -> Ref -> Ref -> Ref -> Ref -> m ()
-commute1b mk1 mk2 r0 r1 r2 r3 = do
-    rn4 <- newNode $ const $ mk2 () ()
-    rn5 <- newNode $ const $ mk2 () ()
-    rn6 <- newNode $ const $ mk2 () ()
-    rn7 <- newNode $ const $ mk1 () () () ()
-    linkNodes (Ref rn4 1) (Ref rn7 1)
-    linkNodes (Ref rn5 1) (Ref rn7 2)
-    linkNodes (Ref rn6 1) (Ref rn7 3)
-    linkNodes r0 $ Ref rn4 0
-    linkNodes r1 $ Ref rn5 0
-    linkNodes r2 $ Ref rn6 0
-    linkNodes r3 $ Ref rn7 0
-{-# INLINABLE commute1b #-}
-
 commute2
     :: HasRewriter sig m
     => (() -> () -> () -> INetF ())
@@ -662,31 +713,6 @@ commute2' mk1a mk1b mk2a mk2b r0 r1 r2 r3 = do
     linkNodes r3 $ Ref rn5 0
 {-# INLINABLE commute2' #-}
 
-commute3'
-    :: HasRewriter sig m
-    => (() -> () -> () -> INetF ())
-    -> (() -> () -> () -> () -> INetF ())
-    -> (() -> () -> () -> () -> INetF ())
-    -> Ref -> Ref -> Ref -> Ref -> Ref -> m ()
-commute3' mk1 mk2a mk2b r0 r1 r2 r3 r4 = do
-    rn5 <- newNode $ const $ mk1 () () ()
-    rn6 <- newNode $ const $ mk1 () () ()
-    rn7 <- newNode $ const $ mk1 () () ()
-    rn8 <- newNode $ const $ mk2a () () () ()
-    rn9 <- newNode $ const $ mk2b () () () ()
-    linkNodes (Ref rn5 1) (Ref rn8 1)
-    linkNodes (Ref rn5 2) (Ref rn9 1)
-    linkNodes (Ref rn6 1) (Ref rn8 2)
-    linkNodes (Ref rn6 2) (Ref rn9 2)
-    linkNodes (Ref rn7 1) (Ref rn8 3)
-    linkNodes (Ref rn7 2) (Ref rn9 3)
-    linkNodes r0 $ Ref rn8 0
-    linkNodes r1 $ Ref rn9 0
-    linkNodes r2 $ Ref rn5 0
-    linkNodes r3 $ Ref rn6 0
-    linkNodes r4 $ Ref rn7 0
-{-# INLINABLE commute3' #-}
-
 propagate1 :: HasRewriter sig m => Ref -> (() -> INetF ()) -> m ()
 propagate1 r0 mk1 = do
     rn1 <- newNode $ const $ mk1 ()
@@ -696,11 +722,6 @@ propagate1 r0 mk1 = do
 propagate2 :: HasRewriter sig m => Ref -> Ref -> (() -> INetF ()) -> m ()
 propagate2 r0 r1 mk1 = propagate1 r0 mk1 *> propagate1 r1 mk1
 {-# INLINABLE propagate2 #-}
-
-propagate3
-    :: HasRewriter sig m => Ref -> Ref -> Ref -> (() -> INetF ()) -> m ()
-propagate3 r0 r1 r2 mk1 = propagate2 r0 r1 mk1 *> propagate1 r2 mk1
-{-# INLINABLE propagate3 #-}
 
 copyIO1
     :: HasRewriter sig m

@@ -34,7 +34,7 @@ import LLVM.PassManager (runPassManager, withPassManager)
 import LLVM.PassManager qualified as LLVM.Pass
 import Prettyprinter
     ( Doc, PageWidth(Unbounded)
-    , defaultLayoutOptions, layoutPageWidth, layoutPretty, line, pretty, (<+>)
+    , defaultLayoutOptions, layoutPageWidth, layoutPretty, line, nest, pretty, (<+>)
     )
 import Prettyprinter.Render.Text (renderIO)
 import System.FilePath (replaceExtension, takeBaseName)
@@ -69,6 +69,8 @@ compileFile file = runGolden $ \lh -> do
     liftIO $ hPutStrLn lh "Emitting"
     exts <- emitProgram prog
     graph <- get @INet
+    liftIO $ withFile (replaceExtension file ".inet") WriteMode
+        $ \h -> hPutDoc h $ pretty graph
     liftIO $ hPutStrLn lh "Interpreting"
     gen <- compileINet exts
     graph' <- get @INet
@@ -79,8 +81,6 @@ compileFile file = runGolden $ \lh -> do
             , moduleDefinitions = llvmDefs
             }
     liftIO $ do
-        withFile (replaceExtension file ".inet") WriteMode
-            $ \h -> hPutDoc h $ pretty graph
         withFile (replaceExtension file ".opt.inet") WriteMode
             $ \h -> hPutDoc h $ pretty graph'
         withFile (replaceExtension file ".hl") WriteMode
@@ -153,26 +153,16 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
             r <- runTraceRewrite h . hdl $ cont <$ ctx
             lint size0 n0 n1
             modify $ _Count %~ succ
-            case (n0, n1) of
-                (AppNode {}, _) -> pure r
-                (_, AppNode {}) -> pure r
-                (DupNode {}, _) -> pure r
-                (_, DupNode {}) -> pure r
-                (DeadNode {}, _) -> pure r
-                (_, DeadNode {}) -> pure r
-                (BoxNode {}, _) -> pure r
-                (_, BoxNode {}) -> pure r
-                _ -> do
-                    count <- gets unCount
-                    netSize <- gets (IM.size . unINet)
-                    pairsSize <- gets (IS.size . unINetPairs)
-                    liftIO $ hPrint h
-                        $ pretty count
-                        <+> pretty netSize
-                        <+> pretty pairsSize
-                        <+> prettyHead n0
-                        <+> prettyHead n1
-                    pure r
+            count <- gets unCount
+            netSize <- gets (IM.size . unINet)
+            pairsSize <- gets (IS.size . unINetPairs)
+            liftIO $ hPrint h
+                $ pretty count
+                <+> pretty netSize
+                <+> pretty pairsSize
+                <+> pretty size0
+                <> nest 4 (line <> pretty n0 <> line <> pretty n1)
+            pure r
         R other -> alg (runTraceRewrite h . hdl) other ctx
       where
         lint :: Has (State INet) sig m => Int -> INetF Ref -> INetF Ref -> m ()
@@ -197,27 +187,6 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
                     <> line <> "Node 1: " <> pretty n0
                     <> line <> "Node 2: " <> pretty n1
                     <> line <> pretty net
-
-        prettyHead :: INetF a -> Doc ann
-        prettyHead n0 = case n0 of
-            LamNode {} -> "Lam"
-            AppNode {} -> "App"
-            DupNode {} -> "Dup"
-            DeadNode {} -> "Dead"
-            BoxNode {} -> "Box"
-            RootNode {} -> "Root"
-            OperandNode {} -> "Operand"
-            OperandPNode {} -> "OperandP"
-            IONode {} -> "IO"
-            IOPNode {} -> "IOP"
-            IOContNode {} -> "IOCont"
-            Pure0Node {} -> "Pure0"
-            Bind0Node {} -> "Bind0"
-            Bind1Node {} -> "Bind1"
-            Branch0Node {} -> "Branch0"
-            Branch1Node {} -> "Branch1"
-            Branch2BNode {} -> "Branch2B"
-            Branch2PNode {} -> "Branch2P"
     {-# INLINE alg #-}
 
 newtype Count = Count { unCount :: Int }
