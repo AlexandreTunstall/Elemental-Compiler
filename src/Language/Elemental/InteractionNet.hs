@@ -591,8 +591,9 @@ reduceNode n0@DeadNode {} n1@Branch1Node {} = reduceNode n1 n0
 reduceNode (Branch2BNode _ _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Branch2BNode {} = reduceNode n1 n0
 reduceNode (Branch2PNode _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
-reduceNode (Branch3PNode _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Branch2PNode {} = reduceNode n1 n0
+reduceNode (Branch3PNode _ _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode n0@DeadNode {} n1@Branch3PNode {} = reduceNode n1 n0
 -- FFI Book-keeping
 reduceNode (RootNode name args _) (BoxNode _ _ r0)
     = propagate1 r0 $ RootNode name args
