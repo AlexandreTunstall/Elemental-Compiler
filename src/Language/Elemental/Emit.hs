@@ -144,7 +144,7 @@ emitExpr
     :: forall tscope scope tx sig m. HasRewriter sig m
     => SList (Const (Ref -> m ())) scope -> Ref -> Expr tscope scope tx -> m ()
 emitExpr scope rr = \case
-    Var vidx -> mkBox vidx >>= getConst (scope !!^ vidx)
+    Var vidx -> getConst (scope !!^ vidx) rr
     App ef ex -> do
         rn1 <- newNode $ const $ AppNode () () ()
         emitExpr scope (Ref rn1 0) ef
@@ -198,7 +198,7 @@ emitExpr scope rr = \case
         let opp = Backend.Partial (SSucc $ SSucc SZero) $ Backend.InsertBit size
             size = fromIntegral $ toNatural ssize
         mkLambda rr $ OperandPNode opp
-    TestBit -> mkLambda rr $ Branch0Node 0
+    TestBit -> mkLambda rr $ Branch0Node $ Level []
   where
     coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
     coerceScope SNil = SNil
@@ -207,14 +207,6 @@ emitExpr scope rr = \case
     withVarargs :: SNat n -> ([a] -> b) -> Backend.FoldArrow n a b
     withVarargs SZero f = f []
     withVarargs (SSucc n) f = \x -> withVarargs n $ f . (x :)
-
-    mkBox :: SNat n -> m Ref
-    mkBox SZero = pure rr
-    mkBox (SSucc n) = do
-        r1 <- mkBox n
-        rn2 <- newNode $ const $ BoxNode 0 () ()
-        linkNodes r1 $ Ref rn2 1
-        pure $ Ref rn2 0
 
     mkIsolateBit :: Int -> Int -> Backend.Operand -> Backend.Operand
     mkIsolateBit size bidx (Backend.InsertBit _ oph opt)
@@ -242,7 +234,8 @@ emitExpr scope rr = \case
         case mr3 of
             Nothing -> put (r2, Just r1)
             Just r3 -> do
-                rn4 <- newNode $ const $ DupNode 0 mempty () () ()
+                rn4 <- newNode $ \rn4
+                    -> DupNode Fanout (Level [rn4]) mempty () () ()
                 linkNodes r2 $ Ref rn4 0
                 linkNodes r3 $ Ref rn4 1
                 put (Ref rn4 2, Just r1)
