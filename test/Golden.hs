@@ -12,7 +12,7 @@
 module Golden where
 
 import Control.Algebra (Algebra(alg), Has, (:+:)(L, R), run)
-import Control.Carrier.Reader (ReaderC(ReaderC))
+import Control.Carrier.Reader (ReaderC(ReaderC), runReader)
 import Control.Carrier.State.Church (State, evalState, get, gets, modify)
 import Control.Lens (Iso', iso, ix, (^?), (%~))
 import Control.Monad.IO.Class (MonadIO, liftIO)
@@ -113,6 +113,7 @@ compileFile file = runGolden $ \lh -> do
         $ evalState @INetPairs mempty
         $ evalState @INetSize 0
         $ evalState @Count 0
+        $ runReader @Level 0
         $ runTraceRewrite <*> m $ lh
 
 printDiags :: DiagnosisC Diagnostic Identity a -> a
