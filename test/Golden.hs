@@ -13,8 +13,10 @@ module Golden where
 
 import Control.Algebra (Algebra(alg), Has, (:+:)(L, R), run)
 import Control.Carrier.Reader (ReaderC(ReaderC), runReader)
-import Control.Carrier.State.Church (State, evalState, get, gets, modify)
-import Control.Lens (Iso', iso, ix, (^?), (%~))
+import Control.Carrier.State.Church
+    (State, evalState, get, gets, modify, runState)
+import Control.Lens (Fold, Iso', at, iso, ix, to, (^?), (%~), (^..))
+import Control.Monad (when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
@@ -22,6 +24,7 @@ import Data.Foldable (traverse_)
 import Data.Functor.Identity (Identity)
 import Data.IntMap qualified as IM
 import Data.IntSet qualified as IS
+import Data.Map.Strict qualified as M
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.Short qualified as TS
@@ -32,9 +35,11 @@ import LLVM.Module
     (File(File), moduleLLVMAssembly, withModuleFromAST, writeLLVMAssemblyToFile)
 import LLVM.PassManager (runPassManager, withPassManager)
 import LLVM.PassManager qualified as LLVM.Pass
+import LLVM.Transforms qualified as LLVM.Opt
 import Prettyprinter
-    ( Doc, PageWidth(Unbounded)
-    , defaultLayoutOptions, layoutPageWidth, layoutPretty, line, nest, pretty, (<+>)
+    ( Doc, PageWidth(Unbounded), Pretty
+    , defaultLayoutOptions, layoutPageWidth, layoutPretty
+    , line, nest, pretty, vcat, (<+>)
     )
 import Prettyprinter.Render.Text (renderIO)
 import System.FilePath (replaceExtension, takeBaseName)
@@ -72,10 +77,10 @@ compileFile file = runGolden $ \lh -> do
     liftIO $ withFile (replaceExtension file ".inet") WriteMode
         $ \h -> hPutDoc h $ pretty graph
     liftIO $ hPutStrLn lh "Interpreting"
-    gen <- compileINet exts
+    bprog <- compileINet exts
     graph' <- get @INet
     liftIO $ hPutStrLn lh "Translating"
-    let llvmDefs = compileProgram gen
+    let llvmDefs = compileProgram bprog
         llvm = defaultModule
             { moduleSourceFileName = TS.toShortByteString $ TS.fromString file
             , moduleDefinitions = llvmDefs
@@ -84,9 +89,10 @@ compileFile file = runGolden $ \lh -> do
         withFile (replaceExtension file ".opt.inet") WriteMode
             $ \h -> hPutDoc h $ pretty graph'
         withFile (replaceExtension file ".hl") WriteMode
-            $ \h -> hPutDoc h $ pretty gen
+            $ \h -> hPutDoc h $ pretty bprog
         withContext $ \ctx -> withModuleFromAST ctx llvm
-            $ \m -> withPassManager passes $ \pm -> do
+            $ \m -> withPassManager passes $ \pm
+            -> withPassManager passes' $ \pm' -> do
                 -- writeLLVMAssemblyToFile doesn't truncate the file.
                 () <- withFile (replaceExtension file ".ll") WriteMode mempty
                 writeLLVMAssemblyToFile (File $ replaceExtension file ".ll") m
@@ -97,10 +103,13 @@ compileFile file = runGolden $ \lh -> do
                     and once isn't enough.
                 -}
                 _ <- runPassManager pm m
+                _ <- runPassManager pm' m
                 _ <- runPassManager pm m
                 _ <- runPassManager pm m
+                _ <- runPassManager pm' m
                 _ <- runPassManager pm m
                 _ <- runPassManager pm m
+                _ <- runPassManager pm' m
                 BSL.fromStrict <$> moduleLLVMAssembly m
   where
     parseSource :: T.Text -> IO PProgram
@@ -112,7 +121,9 @@ compileFile file = runGolden $ \lh -> do
         -> evalState @INet mempty
         $ evalState @INetPairs mempty
         $ evalState @INetSize 0
-        $ evalState @Count 0
+        $ runState @Count (flip (<$) . liftIO . hPrint lh . (<+>) "Total"
+            . pretty . unCount) 0
+        $ runState @Stats (flip (<$) . liftIO . hPrint lh . pretty) mempty
         $ runReader @Level 0
         $ runTraceRewrite <*> m $ lh
 
@@ -136,6 +147,18 @@ passes = LLVM.Pass.CuratedPassSetSpec
     , LLVM.Pass.targetMachine = Nothing
     }
 
+-- CuratedPassSetSpec O3 doesn't apply -inline even though opt -O3 does.
+passes' :: LLVM.Pass.PassSetSpec
+passes' = LLVM.Pass.PassSetSpec
+    { LLVM.Pass.transforms =
+        [ LLVM.Opt.PartialInlining
+        , LLVM.Opt.FunctionInlining 225
+        ]
+    , LLVM.Pass.dataLayout = Nothing
+    , LLVM.Pass.targetLibraryInfo = Nothing
+    , LLVM.Pass.targetMachine = Nothing
+    }
+
 newtype TraceRewriteC m a = TraceRewriteC (Handle -> m a)
     deriving (Functor, Applicative, Monad, MonadIO) via ReaderC Handle m
 
@@ -144,7 +167,8 @@ runTraceRewrite h (TraceRewriteC f) = f h
 {-# INLINE runTraceRewrite #-}
 
 instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
-    , Has (State INetPairs) sig m, Has (State INetSize) sig m)
+    , Has (State INetPairs) sig m, Has (State INetSize) sig m
+    , Has (State Stats) sig m)
     => Algebra (TraceRewrite :+: sig) (TraceRewriteC m)
   where
     alg hdl sig ctx = TraceRewriteC $ \h -> case sig of
@@ -152,24 +176,57 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
             size0 <- gets unINetSize
             r <- runTraceRewrite h . hdl $ cont <$ ctx
             lint size0 n0 n1
+            let nh0 = nodeHead n0
+                nh1 = nodeHead n1
+                statKey = if nh0 < nh1 then (nh0, nh1) else (nh1, nh0)
             modify $ _Count %~ succ
+            modify $ _Stats . at statKey %~ Just . maybe 1 succ
             count <- gets unCount
             netSize <- gets (IM.size . unINet)
             pairsSize <- gets (IS.size . unINetPairs)
-            liftIO $ hPrint h
-                $ pretty count
-                <+> pretty netSize
-                <+> pretty pairsSize
-                <+> pretty size0
-                <> nest 4 (line <> pretty n0 <> line <> pretty n1)
+            case (n0, n1) of
+                -- These nodes are extremely abundant and usually uninteresting.
+                (LamNode {}, _) -> pure ()
+                (_, LamNode {}) -> pure ()
+                (AppNode {}, DupNode {}) -> pure ()
+                (DupNode {}, AppNode {}) -> pure ()
+                (DupNode {}, DupNode {}) -> pure ()
+                (DeadNode {}, _) -> pure ()
+                (_, DeadNode {}) -> pure ()
+                (BoxNode {}, _) -> pure ()
+                (_, BoxNode {}) -> pure ()
+                -- These nodes might require prettyprinting very large blocks.
+                (AccumNBNode {}, _) -> pure ()
+                (_, AccumNBNode {}) -> pure ()
+                (IONode {}, _) -> pure ()
+                (_, IONode {}) -> pure ()
+                (NamedBlockNode {}, _) -> pure ()
+                (_, NamedBlockNode {}) -> pure ()
+                (Merge1Node {}, _) -> pure ()
+                (_, Merge1Node {}) -> pure ()
+                _ -> liftIO $ hPrint h
+                    $ pretty count
+                    <+> pretty netSize
+                    <+> pretty pairsSize
+                    <+> pretty size0
+                    <> nest 4 (line <> pretty n0 <> line <> pretty n1)
+            when (count > 1000000) $ do
+                stats <- get @Stats
+                liftIO $ hPrint h $ pretty stats
+                error "too much work, giving up"
             pure r
         R other -> alg (runTraceRewrite h . hdl) other ctx
       where
-        lint :: Has (State INet) sig m => Int -> INetF Ref -> INetF Ref -> m ()
-        lint size n0 n1
-            = gets unINet >>= (traverse_ . traverse) lintRef
+        lint :: HasRewriter sig m => Int -> INetF Ref -> INetF Ref -> m ()
+        lint size n0 n1 = do
+            net <- gets unINet
+            (traverse_ . traverse) lintRef . snd $ IM.split (pred size) net
+            let f :: Fold (INetF Ref) Ref
+                f = traverse . to ((net IM.!?) . refNode) . traverse . traverse
+            traverse_ lintRef $ n0 ^.. f
+            traverse_ lintRef $ n1 ^.. f
           where
-            lintRef :: Has (State INet) sig m => Ref -> m ()
+            lintRef :: HasRewriter sig m => Ref -> m ()
             lintRef (Ref (-1) (-1)) = abort "uninitialised ref"
             lintRef r3 = do
                 net <- get @INet
@@ -179,8 +236,9 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
                         Nothing -> abort $ "missing port:" <+> pretty r3
                         Just _ -> pure ()
 
-            abort :: Has (State INet) sig m => Doc ann -> m a
+            abort :: HasRewriter sig m => Doc ann -> m a
             abort msg = do
+                deleteBoxes
                 net <- get @INet
                 error . show $ "lint:" <+> msg
                     <> line <> "Size before reduction was" <+> pretty size
@@ -195,6 +253,101 @@ newtype Count = Count { unCount :: Int }
 _Count :: Iso' Count Int
 _Count = iso unCount Count
 {-# INLINE _Count #-}
+
+newtype Stats = Stats { unStats :: M.Map (NodeHead, NodeHead) Int }
+    deriving newtype (Eq, Ord, Monoid, Semigroup)
+
+instance Pretty Stats where
+    pretty
+        = vcat . (uncurry ((. pretty) . (<+>)
+            . uncurry ((. pretty) . (<+>) . pretty)) <$>)
+        . M.assocs . unStats
+
+_Stats :: Iso' Stats (M.Map (NodeHead, NodeHead) Int)
+_Stats = iso unStats Stats
+{-# INLINE _Stats #-}
+
+data NodeHead
+    = AppHead | LamHead | DupHead | DeadHead | BoxHead
+    | ExternalRootHead | PrivateRootHead | AccumIOHead | AccumNBHead
+    | OperandHead | OperandPHead
+    | IOHead | IOPHead | IOPureHead | IOContHead
+    | ReturnHead
+    | Bind0BHead | Bind0FHead | Bind1FHead
+    | Branch0Head | Branch0FHead | Branch1Head
+    | LabelHead | NamedBlockHead | Merge0Head | Merge1Head
+    | TBuildHead | TEntryHead | TSplitHead
+    | TCloseHead | TLeaveHead | TMatchHead
+    deriving stock (Eq, Ord)
+
+instance Pretty NodeHead where
+    pretty AppHead = "App"
+    pretty LamHead = "Lam"
+    pretty DupHead = "Dup"
+    pretty DeadHead = "Dead"
+    pretty ExternalRootHead = "ExternalRoot"
+    pretty PrivateRootHead = "PrivateRoot"
+    pretty AccumIOHead = "AccumIO"
+    pretty AccumNBHead = "AccumNB"
+    pretty BoxHead = "Box"
+    pretty OperandHead = "Operand"
+    pretty OperandPHead = "OperandP"
+    pretty IOHead = "IO"
+    pretty IOPHead = "IOP"
+    pretty IOPureHead = "IOPure"
+    pretty IOContHead = "IOCont"
+    pretty ReturnHead = "Return"
+    pretty Bind0BHead = "Bind0B"
+    pretty Bind0FHead = "Bind0F"
+    pretty Bind1FHead = "Bind1F"
+    pretty Branch0Head = "Branch0"
+    pretty Branch0FHead = "Branch0F"
+    pretty Branch1Head = "Branch1"
+    pretty LabelHead = "Label"
+    pretty NamedBlockHead = "NamedBlock"
+    pretty Merge0Head = "Merge0"
+    pretty Merge1Head = "Merge1"
+    pretty TBuildHead = "TBuild"
+    pretty TEntryHead = "TEntry"
+    pretty TSplitHead = "TSplit"
+    pretty TCloseHead = "TClose"
+    pretty TLeaveHead = "TLeave"
+    pretty TMatchHead = "TMatch"
+
+nodeHead :: INetF a -> NodeHead
+nodeHead x = case x of
+    AppNode {} -> AppHead
+    LamNode {} -> LamHead
+    DupNode {} -> DupHead
+    DeadNode {} -> DeadHead
+    BoxNode {} -> BoxHead
+    ExternalRootNode {} -> ExternalRootHead
+    PrivateRootNode {} -> PrivateRootHead
+    AccumIONode {} -> AccumIOHead
+    AccumNBNode {} -> AccumNBHead
+    OperandNode {} -> OperandHead
+    OperandPNode {} -> OperandPHead
+    IONode {} -> IOHead
+    IOPNode {} -> IOPHead
+    IOPureNode {} -> IOPureHead
+    IOContNode {} -> IOContHead
+    ReturnNode {} -> ReturnHead
+    Bind0BNode {} -> Bind0BHead
+    Bind0FNode {} -> Bind0FHead
+    Bind1FNode {} -> Bind1FHead
+    Branch0Node {} -> Branch0Head
+    Branch0FNode {} -> Branch0FHead
+    Branch1Node {} -> Branch1Head
+    LabelNode {} -> LabelHead
+    NamedBlockNode {} -> NamedBlockHead
+    Merge0Node {} -> Merge0Head
+    Merge1Node {} -> Merge1Head
+    TBuildNode {} -> TBuildHead
+    TEntryNode {} -> TEntryHead
+    TSplitNode {} -> TSplitHead
+    TCloseNode {} -> TCloseHead
+    TLeaveNode {} -> TLeaveHead
+    TMatchNode {} -> TMatchHead
 
 hPutDoc :: Handle -> Doc ann -> IO ()
 hPutDoc h doc = renderIO h $ layoutPretty opts doc

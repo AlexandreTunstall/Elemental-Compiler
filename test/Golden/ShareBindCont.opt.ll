@@ -10,6 +10,6 @@ define i1 @main1() local_unnamed_addr {
 
 define i1 @main2() local_unnamed_addr {
   %1 = tail call i1 @getbit()
-  %not. = xor i1 %1, true
-  ret i1 %not.
+  %not.1.i = xor i1 %1, true
+  ret i1 %not.1.i
 }

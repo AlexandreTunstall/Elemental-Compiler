@@ -40,14 +40,16 @@ import Language.Elemental.Singleton
 
 -- | Emits a program as an interaction net.
 emitProgram
-    :: HasRewriter sig m => Program -> m [Backend.Named Backend.External]
+    :: HasRewriter sig m
+    => Program -> m [Backend.ForeignNamed Backend.External]
 emitProgram (Program decls) = toList <$> emitDeclScope SNil SNil decls
 
 -- | Emits a list of declarations.
 emitDeclScope
     :: (HasRewriter sig m)
     => SList (SType 'Zero) scope -> SList (Const (Ref -> m ())) scope
-    -> DeclScope scope rest -> m (DList (Backend.Named Backend.External))
+    -> DeclScope scope rest
+    -> m (DList (Backend.ForeignNamed Backend.External))
 emitDeclScope scopeTypes scope = \case
     DeclNil -> pure mempty
     DeclCons decl decls -> case declType scopeTypes decl of
@@ -55,8 +57,8 @@ emitDeclScope scopeTypes scope = \case
             exts <- emitDecl scopeTypes scope () decl
             (exts <>) <$> emitDeclScope scopeTypes scope decls
         SJust t -> do
-            rn0 <- newNode $ const $ AppNode () () ()
-            rn1 <- newNode $ const $ LamNode () () ()
+            rn0 <- newNode $ AppNode () () ()
+            rn1 <- newNode $ LamNode () () ()
             linkNodes (Ref rn0 0) (Ref rn1 0)
             propagate2 (Ref rn0 2) (Ref rn1 2) DeadNode
             exts <- emitDecl scopeTypes scope (Const $ Ref rn0 1) decl
@@ -72,27 +74,35 @@ emitDecl
     :: (HasRewriter sig m)
     => SList (SType 'Zero) scope -> SList (Const (Ref -> m ())) scope
     -> FoldMaybe () (Const Ref) mt -> Decl scope mt
-    -> m (DList (Backend.Named Backend.External))
+    -> m (DList (Backend.ForeignNamed Backend.External))
 emitDecl scopeTypes scope rr = \case
     Binding expr -> mempty <$ emitExpr scope (getConst rr) expr
     ForeignImport fname t -> do
         let ltargs = sForeignArgs t
             ltret = sForeignRet t
             name = backendForeignName fname
+            ext = Backend.External (backendArgs ltargs) (backendType ltret)
         emitExpr scope (getConst rr)
             $ wrapImport SZero scopeTypes t $ Call name ltargs ltret
-        pure $ pure $ name
-            Backend.:= Backend.External (backendArgs ltargs) (backendType ltret)
+        pure $ pure $ name Backend.:= ext
     ForeignExport fname expr -> do
         let t = exprType SZero scopeTypes expr
             ltargs = sForeignArgs t
             ltret = sForeignRet t
-        freshNums <- traverseSList newNodeIndex ltargs
-        let names = Backend.Name . fromIntegral <$> freshNums
-            ops = zipWith Backend.Reference (backendArgs ltargs) names
-            args = zipWith (Backend.:=) names (backendArgs ltargs)
-        rn1 <- newNode $ const $ RootNode (backendForeignName fname) args ()
-        emitExpr scope (Ref rn1 0) $ applyArgs ltret ltargs ops
+        names <- traverseSList newName ltargs
+        let ops = zipWith Backend.Reference (backendArgs ltargs) names
+            bargs = zipWith (Backend.:=) names (backendArgs ltargs)
+            bret = backendType ltret
+            bname = backendForeignName fname
+        rn1 <- newNode $ ExternalRootNode bname bargs bret ()
+        rn2 <- newNode $ AccumIONode mempty () ()
+        rn3 <- newNode $ Bind0FNode () ()
+        rn4 <- newNode $ AppNode () () ()
+        linkNodes (Ref rn1 0) (Ref rn2 1)
+        linkNodes (Ref rn2 0) (Ref rn4 2)
+        linkNodes (Ref rn3 1) (Ref rn4 0)
+        mkLambda (Ref rn4 1) ReturnNode
+        emitExpr scope (Ref rn3 0) $ applyArgs ltret ltargs ops
             $ wrapExport SZero scopeTypes t expr
         pure mempty
     ForeignPrimitive pfin
@@ -105,17 +115,15 @@ emitDecl scopeTypes scope rr = \case
         i0 = SBackendType li0
         in case pk of
             SReadPointer -> (mempty <$) $ emitExpr scope (getConst rr) $ BindIO
-                :@ lt :$ BackendIO (sMarshall t)
-                    (Backend.Body mempty $ Backend.Load baddr)
-                :@ t :$ Lam lt (PureIO :@ t
-                    :$ marshallIn SZero (lt :^ scopeTypes) t (Var SZero))
+                :@ lt :$ BackendIO (sMarshall t) (Backend.Load baddr)
+                :@ t :$ (lt
+                    :\ marshallIn SZero (lt :^ scopeTypes) t (Var SZero))
             SWritePointer -> (mempty <$) $ emitExpr scope (getConst rr)
                 $ Lam t $ BindIO
                 :@ i0 :$ (BackendPIO (sMarshall t) li0 (Backend.Store baddr)
                     :$ marshallOut SZero (t :^ scopeTypes) t (Var SZero))
-                :@ SUnitType :$ Lam i0 (PureIO :@ SUnitType
-                    :$ marshallIn SZero (i0 :^ t :^ scopeTypes) SUnitType
-                        (Var SZero))
+                :@ SUnitType :$ (i0 :\ marshallIn SZero (i0 :^ t :^ scopeTypes)
+                    SUnitType (Var SZero))
   where
     traverseSList :: Applicative f => f a -> SList sing as -> f [a]
     traverseSList _ SNil = pure []
@@ -146,47 +154,53 @@ emitExpr
 emitExpr scope rr = \case
     Var vidx -> mkBox vidx >>= getConst (scope !!^ vidx)
     App ef ex -> do
-        rn1 <- newNode $ const $ AppNode () () ()
+        rn1 <- newNode $ AppNode () () ()
         emitExpr scope (Ref rn1 0) ef
         emitExpr scope (Ref rn1 1) ex
         linkNodes rr $ Ref rn1 2
     TypeApp ef _ -> emitExpr scope rr ef
     Lam _ ey -> do
-        rn1 <- newNode $ const $ LamNode () () ()
+        rn1 <- newNode $ LamNode () () ()
         Ref rn1 1 >=^ scope $ \scope' -> emitExpr scope' (Ref rn1 2) ey
         linkNodes rr $ Ref rn1 0
     TypeLam ex -> emitExpr (coerceScope scope) rr ex
     Addr addr _ tx -> do
-        rn1 <- newNode $ const $ OperandNode (Backend.Address
+        rn1 <- newNode $ OperandNode (Backend.Address
             (backendType $ sMarshall tx) $ getAddress addr) ()
         linkNodes rr $ Ref rn1 0
     BackendOperand _ op -> do
-        rn1 <- newNode $ const $ OperandNode op ()
+        rn1 <- newNode $ OperandNode op ()
         linkNodes rr $ Ref rn1 0
-    BackendIO _ body -> do
-        rn1 <- newNode $ const $ IONode body ()
-        linkNodes rr $ Ref rn1 0
+    BackendIO _ instr -> propagate1 rr $ IOContNode instr
     BackendPIO _ _ pio
         -> mkLambda rr $ IOPNode (Backend.Partial (SSucc SZero) pio)
-    PureIO -> mkLambda rr Pure0Node
-    BindIO -> mkLambda rr Bind0Node
+    PureIO -> do
+        rn1 <- newNode $ LamNode () () ()
+        rn2 <- newNode $ IOPureNode () ()
+        rn3 <- newNode $ LamNode () () ()
+        rn4 <- newNode $ AppNode () () ()
+        rn5 <- newNode $ BoxNode 0 () ()
+        linkNodes (Ref rn1 1) (Ref rn5 0)
+        linkNodes (Ref rn1 2) (Ref rn2 0)
+        linkNodes (Ref rn2 1) (Ref rn3 0)
+        linkNodes (Ref rn3 1) (Ref rn4 0)
+        linkNodes (Ref rn3 2) (Ref rn4 2)
+        linkNodes (Ref rn4 1) (Ref rn5 1)
+        linkNodes rr $ Ref rn1 0
+    BindIO -> mkLambda rr Bind0BNode
     LoadPointer -> do
-        rn1 <- newNode $ const $ LamNode () () ()
+        rn1 <- newNode $ LamNode () () ()
         linkNodes (Ref rn1 1) (Ref rn1 2)
         linkNodes rr $ Ref rn1 0
     StorePointer -> do
-        rn1 <- newNode $ const $ LamNode () () ()
+        rn1 <- newNode $ LamNode () () ()
         linkNodes (Ref rn1 1) (Ref rn1 2)
         linkNodes rr $ Ref rn1 0
-    Call name SNil tret -> do
-        let body = Backend.Body
-                { Backend.bodyInstrs = mempty
-                , Backend.bodyTerm = Backend.Call (backendType tret) name []
-                }
-        propagate1 rr $ IONode body
-    Call name ltargs@(_ :^ _) tret -> do
+    Call fname SNil tret -> propagate1 rr $ IOContNode
+        $ Backend.Call (backendType tret) (Backend.ExternalName fname) []
+    Call fname ltargs@(_ :^ _) tret -> do
         let callp = Backend.Partial len $ withVarargs len
-                $ Backend.Call (backendType tret) name
+                $ Backend.Call (backendType tret) (Backend.ExternalName fname)
             len = sLength ltargs
         mkLambda rr $ IOPNode callp
     IsolateBit bidx ssize -> do
@@ -198,7 +212,7 @@ emitExpr scope rr = \case
         let opp = Backend.Partial (SSucc $ SSucc SZero) $ Backend.InsertBit size
             size = fromIntegral $ toNatural ssize
         mkLambda rr $ OperandPNode opp
-    TestBit -> mkLambda rr $ Branch0Node 0
+    TestBit -> mkLambda rr Branch0Node
   where
     coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
     coerceScope SNil = SNil
@@ -212,7 +226,7 @@ emitExpr scope rr = \case
     mkBox SZero = pure rr
     mkBox (SSucc n) = do
         r1 <- mkBox n
-        rn2 <- newNode $ const $ BoxNode 0 () ()
+        rn2 <- newNode $ BoxNode 0 () ()
         linkNodes r1 $ Ref rn2 1
         pure $ Ref rn2 0
 
@@ -242,7 +256,7 @@ emitExpr scope rr = \case
         case mr3 of
             Nothing -> put (r2, Just r1)
             Just r3 -> do
-                rn4 <- newNode $ const $ DupNode 0 mempty () () ()
+                rn4 <- newNode $ DupNode 0 () () ()
                 linkNodes r2 $ Ref rn4 0
                 linkNodes r3 $ Ref rn4 1
                 put (Ref rn4 2, Just r1)
@@ -255,8 +269,8 @@ backendType :: SBackendType t -> Backend.Type
 backendType (SBackendInt size) = Backend.IntType $ fromIntegral $ toNatural size
 
 -- | Converts a foreign name to a name in the backend AST.
-backendForeignName :: ForeignName -> Backend.Name
-backendForeignName (ForeignName t) = Backend.ExternalName $ toShortByteString t
+backendForeignName :: ForeignName -> Backend.ForeignName
+backendForeignName (ForeignName t) = Backend.ForeignName $ toShortByteString t
 
 -- GHC gives a nonexhaustive pattern warning if this is inlined. :/
 -- | Calls a continuation with a proof relating 'AllIsOpType' and 'IsOpType'.

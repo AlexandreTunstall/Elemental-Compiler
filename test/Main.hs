@@ -27,6 +27,5 @@ tests = do
         ]
   where
     timeout :: Timeout
-    -- timeout = mkTimeout 5000000  -- 5s
-    timeout = mkTimeout $ 7 * 86400 * 1000000 -- 7d
+    timeout = mkTimeout 120000000  -- 120s
 

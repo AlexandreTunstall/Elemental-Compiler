@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImportQualifiedPost #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -11,69 +12,101 @@
 
 module Language.Elemental.Backend
     ( Name(..)
-    , Named(..)
+    , Named
+    , FunctionName(..)
+    , NamedFunction
+    , ForeignName(..)
+    , ForeignNamed
+    , Named'(..)
+    , Label(..)
     , Type(..)
     , Bit(..)
     , Operand(..)
     , Instruction(..)
-    , Body(..)
+    , Terminator(..)
+    , _Return
+    , _TailCall
+    , Block(..)
+    , _entryBlock
+    , _namedBlocks
+    , IBlock(..)
+    , _IBlock
+    , BlockList(..)
+    , _blockInstrs
+    , _blockTerm
+    , NamedBlockList(..)
     , Function(..)
+    , _functionArgs
+    , _functionRet
+    , ImplicitFunction(..)
+    , _ifunctionBlocks
     , External(..)
     , Program(..)
     , opType
     , instrType
-    , concatBody
     -- * Partial
     , Partial(..)
     , FoldArrow
     , addOperand
-    -- * Renaming
-    , renameOp
-    , renameInstr
-    , renameBody
     -- * Traversals
     , opRefs
     , instrOps
-    , instrBodies
-    , bodyOps
-    , bodyBoundNames
-    , bodyFreeRefs
+    , termOps
+    , blockOps
+    , blockBoundNames
+    , blockFreeRefs
+    , blockListBlocks
+    , blockListBoundNames
+    , blockListFreeRefs
     ) where
 
-import Control.Lens (Traversal', anyOf, (%~))
+import Control.Lens
+    ( Bifunctor, Iso', Lens', Prism', Traversal'
+    , anyOf, bimap, filtered, iso, lens, noneOf, prism
+    )
 import Data.ByteString.Short (ShortByteString)
 import Data.DList (DList, snoc, toList)
 import Data.Foldable (foldl')
+import Data.IntMap qualified as IM
 import Data.Kind qualified as Kind
-import Data.Map qualified as M
-import Data.Maybe (fromMaybe)
 import Data.String (IsString(fromString))
 import Numeric.Natural (Natural)
 import Prettyprinter
     ( Doc, Pretty(pretty)
     , concatWith, encloseSep, flatAlt, group
-    , hardline, line, nest, parens, tupled
+    , hardline, indent, line, nest, parens, tupled
     , (<+>)
     )
 
 import Language.Elemental.Singleton
 
--- | Names for the operand namespace and the function namespace.
-data Name
-    = Name Integer
-    | ExternalName ShortByteString
-    | SubName Name Integer
-    | UnusedName
+-- | Names for the operand namespace.
+newtype Name = Name Int
+    deriving stock (Eq, Ord, Read, Show)
+    deriving newtype (Pretty)
+
+-- | Names for the function namespace.
+data FunctionName = PrivateName Name | ExternalName ForeignName
     deriving stock (Eq, Ord, Read, Show)
 
-instance IsString Name where
-    fromString = ExternalName . fromString
+instance Pretty FunctionName where
+    pretty (PrivateName n) = pretty n
+    pretty (ExternalName n) = pretty n
 
-instance Pretty Name where
-    pretty (Name n) = pretty n
-    pretty (ExternalName str) = pretty $ show str
-    pretty (SubName name n) = pretty name <> "." <> pretty n
-    pretty UnusedName = "_"
+newtype ForeignName = ForeignName { unForeignName :: ShortByteString }
+    deriving stock (Eq, Ord, Read, Show)
+
+instance IsString ForeignName where
+    fromString = ForeignName . fromString
+
+instance Pretty ForeignName where
+    pretty = pretty . show . unForeignName
+
+newtype Label = Label { unLabel :: Int }
+    deriving newtype (Eq, Ord, Read, Show)
+
+instance Pretty Label where
+    pretty (Label idx) = "@" <> pretty idx
 
 data Type = IntType Int | TupleType [Type]
     deriving stock (Eq, Read, Show)
@@ -108,8 +141,6 @@ data Operand
     deriving stock (Eq, Read, Show)
 
 instance Pretty Operand where
-    -- pretty (Reference t name) = pretty t <+> "%" <> pretty name
-    -- pretty (Address t addr) = pretty t <+> "@" <> pretty addr
     pretty (Reference _ name) = "%" <> pretty name
     pretty (Address _ addr) = "@" <> pretty addr
     pretty Empty = "[]"
@@ -138,17 +169,12 @@ opType = \case
 data Instruction
     -- | Allows setting a = b.
     = Pure Operand
-    -- | Calls the symbol 'Name' with the given arguments.
-    | Call Type Name [Operand]
+    -- | Calls the function with the given arguments.
+    | Call Type FunctionName [Operand]
     -- | Loads the value of a pointer.
     | Load Operand
     -- | Stores the second value into the first pointer.
     | Store Operand Operand
-    {-|
-        Runs the instructions in the first body if the value of the operand is
-        @True@. Otherwise, it runs the instructions in the second body.
-    -}
-    | Branch Operand Body Body
     deriving stock (Eq, Read, Show)
 
 instance Pretty Instruction where
@@ -157,8 +183,6 @@ instance Pretty Instruction where
         = foldl' (<+>) ("Call" <+> pretty name) (pretty <$> args)
     pretty (Load op) = "Load" <+> pretty op
     pretty (Store op1 op2) = "Store" <+> pretty op1 <+> pretty op2
-    pretty (Branch op bt bf) = nest 4 ("If" <+> pretty op >>> pretty bt)
-        >>> nest 4 ("Else" >>> pretty bf) >>> "End"
 
 instrType :: Instruction -> Type
 instrType = \case
@@ -166,7 +190,40 @@ instrType = \case
     Call t _ _ -> t
     Load ptr -> opType ptr
     Store _ _ -> IntType 0
-    Branch _ bt _ -> instrType $ bodyTerm bt
+
+data Terminator
+    = Jump Label
+    {-|
+        Jumps to the first label if the value of the operand is @True@.
+        Otherwise, it jumps to the second label.
+    -}
+    | Branch Operand Label Label
+    | Return Operand
+    -- | Calls the function and returns its return value.
+    | TailCall Name Operand
+    -- | Indicates that this block is unreachable.
+    | Unreachable
+    deriving stock (Eq, Read, Show)
+
+instance Pretty Terminator where
+    pretty (Jump lbl) = "Jump" <+> pretty lbl
+    pretty (Branch op lblt lblf)
+        = "Branch" <+> pretty op <+> pretty lblt <+> pretty lblf
+    pretty (Return op) = "Return" <+> pretty op
+    pretty (TailCall name parg) = "TailCall" <+> pretty name <+> pretty parg
+    pretty Unreachable = "Unreachable"
+
+_Return :: Prism' Terminator Operand
+_Return = prism Return $ \case
+    Return op -> Right op
+    term -> Left term
+{-# INLINE _Return #-}
+
+_TailCall :: Prism' Terminator (Name, Operand)
+_TailCall = prism (uncurry TailCall) $ \case
+    TailCall name parg -> Right (name, parg)
+    term -> Left term
+{-# INLINE _TailCall #-}
 
 data Partial a where
     Partial :: SNat ('Succ n) -> FoldArrow ('Succ n) Operand a -> Partial a
@@ -198,31 +255,110 @@ type family FoldArrow n a b where
     FoldArrow 'Zero _ b = b
     FoldArrow ('Succ n) a b = a -> FoldArrow n a b
 
-data Named a = Name := a
+data Named' a b = a := b
     deriving stock (Eq, Read, Show, Foldable, Functor, Traversable)
 
-instance Pretty a => Pretty (Named a) where
+instance (Pretty a, Pretty b) => Pretty (Named' a b) where
     pretty (name := a) = pretty name <+> "=" <+> pretty a
 
-data Body = Body
-    { bodyInstrs :: DList (Named Instruction)
-    -- | The last instruction in the body.
-    , bodyTerm :: Instruction
+instance Bifunctor Named' where
+    bimap f g (name := a) = f name := g a
+
+type Named = Named' Name
+type ForeignNamed = Named' ForeignName
+type NamedFunction
+    = Either (Named ImplicitFunction) (Named' FunctionName Function)
+
+data Block = Block
+    { blockInstrs :: DList (Named Instruction)
+    , blockTerm :: Terminator
     } deriving stock (Eq, Read, Show)
 
-instance Pretty Body where
+instance Pretty Block where
     pretty b = concatWith (>>>) . toList
-        $ snoc (pretty <$> bodyInstrs b) (pretty $ bodyTerm b)
+        $ snoc (pretty <$> blockInstrs b) (pretty $ blockTerm b)
+
+_blockInstrs :: Lens' Block (DList (Named Instruction))
+_blockInstrs = lens blockInstrs $ \b instrs -> b { blockInstrs = instrs }
+{-# INLINE _blockInstrs #-}
+
+_blockTerm :: Lens' Block Terminator
+_blockTerm = lens blockTerm $ \b term -> b { blockTerm = term }
+{-# INLINE _blockTerm #-}
+
+newtype IBlock = IBlock { unIBlock :: DList (Named Instruction) }
+    deriving stock (Eq, Read, Show)
+    deriving newtype (Monoid, Semigroup)
+
+instance Pretty IBlock where
+    pretty (IBlock instrs) = concatWith (>>>) . toList $ pretty <$> instrs
+
+_IBlock :: Iso' IBlock (DList (Named Instruction))
+_IBlock = iso unIBlock IBlock
+{-# INLINE _IBlock #-}
+
+data BlockList = BlockList
+    { entryBlock :: Block
+    , namedBlocks :: NamedBlockList
+    } deriving stock (Eq, Read, Show)
+
+instance Pretty BlockList where
+    pretty bs = concatWith (>>>)
+        $ indent 4 (pretty $ entryBlock bs) : prettyNamedBlocks (namedBlocks bs)
+
+_entryBlock :: Lens' BlockList Block
+_entryBlock = lens entryBlock $ \bs b -> bs { entryBlock = b }
+{-# INLINE _entryBlock #-}
+
+_namedBlocks :: Lens' BlockList NamedBlockList
+_namedBlocks = lens namedBlocks $ \bs nbs -> bs { namedBlocks = nbs }
+{-# INLINE _namedBlocks #-}
+
+newtype NamedBlockList = NamedBlockList { unNamedBlockList :: IM.IntMap Block }
+    deriving stock (Eq, Read, Show)
+    deriving newtype (Monoid, Semigroup)
+
+instance Pretty NamedBlockList where
+    pretty nbs = concatWith (>>>) $ prettyNamedBlocks nbs
+
+prettyNamedBlocks :: NamedBlockList -> [Doc ann]
+prettyNamedBlocks nbs = prettyLabel <$> IM.assocs (unNamedBlockList nbs)
+  where
+    prettyLabel (lbl, b) = nest 4 $ pretty lbl <> ":" <> line <> pretty b
 
 data Function = Function
     { functionArgs :: [Named Type]
-    , functionBody :: Body
+    , functionRet :: Type
+    , functionBlocks :: BlockList
     } deriving stock (Eq, Read, Show)
 
 instance Pretty Function where
-    pretty f = nest 4 ("Function" <+> tupled (pretty <$> functionArgs f)
-        >>> pretty (functionBody f))
+    pretty f = "Function" <+> pretty (functionRet f)
+        <+> tupled (pretty <$> functionArgs f)
+        >>> pretty (functionBlocks f)
         >>> "End"
+
+_functionArgs :: Lens' Function [Named Type]
+_functionArgs = lens functionArgs $ \f args -> f { functionArgs = args }
+{-# INLINE _functionArgs #-}
+
+_functionRet :: Lens' Function Type
+_functionRet = lens functionRet $ \f t -> f { functionRet = t }
+{-# INLINE _functionRet #-}
+
+data ImplicitFunction = ImplicitFunction
+    { ifunctionArgs :: [Named Type]
+    , ifunctionBlocks :: BlockList
+    }
+    deriving stock (Eq, Read, Show)
+
+instance Pretty ImplicitFunction where
+    pretty f = "Implicit Function" <+> tupled (pretty <$> ifunctionArgs f)
+        >>> pretty (ifunctionBlocks f) >>> "End"
+
+_ifunctionBlocks :: Lens' ImplicitFunction BlockList
+_ifunctionBlocks = lens ifunctionBlocks $ \f bs -> f { ifunctionBlocks = bs }
+{-# INLINE _ifunctionBlocks #-}
 
 data External = External
     { externalArgs :: [Type]
@@ -233,15 +369,14 @@ instance Pretty External where
     pretty (External args ret) = pretty ret <+> tupled (pretty <$> args)
 
 data Program = Program
-    { programImports :: [Named External]
-    , programFunctions :: [Named Function] }
+    { programImports :: [ForeignNamed External]
+    , programFunctions :: [NamedFunction]
+    }
     deriving stock (Eq, Read, Show)
 
 instance Pretty Program where
-    pretty (Program exts funcs) = concatWith f
-        [ concatWith f (pretty <$> exts)
-        , concatWith f (pretty <$> funcs)
-        ]
+    pretty (Program exts funcs)
+        = concatWith f $ (pretty <$> exts) <> (either pretty pretty <$> funcs)
       where
         f a b = a <> line <> line <> b
 
@@ -249,12 +384,6 @@ addOperand :: Operand -> Partial a -> Either (Partial a) a
 addOperand op (Partial (SSucc n) f) = case n of
     SZero -> Right $ f op
     SSucc _ -> Left $ Partial n $ f op
-
-concatBody :: Name -> Body -> Body -> Body
-concatBody name b1 b2 = Body
-    { bodyInstrs = snoc (bodyInstrs b1) (name := bodyTerm b1) <> bodyInstrs b2
-    , bodyTerm = bodyTerm b2
-    }
 
 opRefs :: Traversal' Operand (Type, Name)
 opRefs f op = case op of
@@ -268,22 +397,7 @@ opRefs f op = case op of
         -> Select <$> opRefs f opc <*> opRefs f opt <*> opRefs f opf
     Tuple ops -> Tuple <$> traverse (opRefs f) ops
     GetElement idx opt -> GetElement idx <$> opRefs f opt
-
-renameOp :: M.Map Name Operand -> Operand -> Operand
-renameOp re op = case op of
-    Reference _ name -> fromMaybe op $ re M.!? name
-    Address _ _ -> op
-    Empty -> op
-    Constant _ -> op
-    IsolateBit size idx op' -> IsolateBit size idx $ renameOp re op'
-    InsertBit size oph opt -> InsertBit size (renameOp re oph) (renameOp re opt)
-    Select opc opt opf
-        -> Select (renameOp re opc) (renameOp re opt) (renameOp re opf)
-    Tuple ops -> Tuple $ renameOp re <$> ops
-    GetElement idx opt -> GetElement idx $ renameOp re opt
-
-renameInstr :: M.Map Name Operand -> Instruction -> Instruction
-renameInstr re = instrOps %~ renameOp re
+{-# INLINABLE opRefs #-}
 
 instrOps :: Traversal' Instruction Operand
 instrOps f instr = case instr of
@@ -291,40 +405,58 @@ instrOps f instr = case instr of
     Call t name args -> Call t name <$> traverse f args
     Load ptr -> Load <$> f ptr
     Store ptr op -> Store <$> f ptr <*> f op
-    Branch opc bt bf -> Branch <$> f opc <*> bodyOps f bt <*> bodyOps f bf
 
-instrBodies :: Traversal' Instruction Body
-instrBodies f instr = case instr of
-    Pure _ -> pure instr
-    Call {} -> pure instr
-    Load _ -> pure instr
-    Store _ _ -> pure instr
-    Branch opc bt bf -> Branch opc <$> f bt <*> f bf
+termOps :: Traversal' Terminator Operand
+termOps f = \case
+    Jump lbl -> pure $ Jump lbl
+    Branch opc lblt lblf -> (\opc' -> Branch opc' lblt lblf) <$> f opc
+    Return op -> Return <$> f op
+    TailCall name parg -> TailCall name <$> f parg
+    Unreachable -> pure Unreachable
+{-# INLINABLE termOps #-}
 
-renameBody :: M.Map Name Operand -> Body -> Body
-renameBody re = bodyOps %~ renameOp re
-
-bodyOps :: Traversal' Body Operand
-bodyOps f (Body instrs term) = Body <$> go instrs <*> instrOps f term
+blockOps :: Traversal' Block Operand
+blockOps f (Block instrs term) = Block <$> go instrs <*> termOps f term
   where
     go = traverse . traverse $ instrOps f
+{-# INLINABLE blockOps #-}
 
-bodyBoundNames :: Traversal' Body Name
-bodyBoundNames f (Body instrs term) = Body <$> go instrs <*> visit term
+blockBoundNames :: Traversal' Block Name
+blockBoundNames f (Block instrs term) = Block <$> go instrs <*> pure term
   where
-    go = traverse $ \(name := instr) -> (:=) <$> f name <*> visit instr
-    visit = instrBodies . bodyBoundNames $ f
+    go = traverse $ \(name := instr) -> (:=) <$> f name <*> pure instr
+{-# INLINABLE blockBoundNames #-}
 
-bodyFreeRefs :: Traversal' Body (Type, Name)
-bodyFreeRefs f b@(Body instrs term) = Body <$> go instrs <*> instrNames g term
+blockFreeRefs :: Traversal' Block (Type, Name)
+blockFreeRefs f b@(Block instrs term) = Block <$> go instrs <*> termNames g term
   where
     go = traverse . traverse $ instrNames g
     g ref
-        | anyOf bodyBoundNames (== snd ref) b = pure ref
+        | anyOf blockBoundNames (== snd ref) b = pure ref
         | otherwise = f ref
 
     instrNames :: Traversal' Instruction (Type, Name)
     instrNames = instrOps . opRefs
+
+    termNames :: Traversal' Terminator (Type, Name)
+    termNames = termOps . opRefs
+{-# INLINABLE blockFreeRefs #-}
+
+blockListBlocks :: Traversal' BlockList Block
+blockListBlocks f (BlockList eb (NamedBlockList nbs))
+    = BlockList <$> f eb <*> (NamedBlockList <$> traverse f nbs)
+{-# INLINABLE blockListBlocks #-}
+
+blockListBoundNames :: Traversal' BlockList Name
+blockListBoundNames = blockListBlocks . blockBoundNames
+{-# INLINABLE blockListBoundNames #-}
+
+blockListFreeRefs :: Traversal' BlockList (Type, Name)
+blockListFreeRefs f bs = (blockListBlocks . blockFreeRefs . filtered g) f bs
+  where
+    g :: (Type, Name) -> Bool
+    g (_, name) = noneOf blockListBoundNames (name ==) bs
+{-# INLINABLE blockListFreeRefs #-}
 
 (>>>) :: Doc ann -> Doc ann -> Doc ann
 a >>> b = a <> flatAlt hardline "; " <> b

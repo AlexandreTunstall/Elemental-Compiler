@@ -10,10 +10,11 @@ define i1 @main(i1) local_unnamed_addr #0 {
 }
 
 define i1 @main2() local_unnamed_addr {
+__elem_0.exit:
+  %0 = tail call i1 @getbit()
   %1 = tail call i1 @getbit()
-  %2 = tail call i1 @getbit()
-  %3 = xor i1 %1, %2
-  ret i1 %3
+  %2 = xor i1 %0, %1
+  ret i1 %2
 }
 
 attributes #0 = { norecurse nounwind readnone }

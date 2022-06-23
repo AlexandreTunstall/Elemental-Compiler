@@ -73,9 +73,14 @@ prettyExpr = flip $ \case
     Lam tx ey -> withPrec 0 $ "λ" <> prettyType 2 tx <+> prettyExpr 0 ey
     TypeLam ex -> withPrec 0 $ "Λ" <+> prettyExpr 0 ex
     Addr addr _ _ -> withPrec 3 $ braces $ "addr" <+> pretty addr
-    BackendOperand lt _ -> withPrec 3 $ braces $ "op" <+> prettyBackendType lt
-    BackendIO lt _ -> withPrec 3 $ braces $ "io op" <+> prettyBackendType lt
+    BackendOperand lt op
+        -> withPrec 3 $ braces $ "op" <+> prettyBackendType lt <+> pretty op
+    BackendIO lt b
+        -> withPrec 3 $ braces $ "io op" <+> prettyBackendType lt <+> pretty b
     BackendPIO lt _ _ -> withPrec 3 $ braces $ "iop op" <+> prettyBackendType lt
+    -- ContIO t cont -> withPrec 3 $ braces $ "contIO" <+> prettyType 2 t
+    --     -- This might not be the correct type, but seeing into 'ContIO' helps.
+    --     <+> prettyExpr 2 (cont $ SBackendInt SZero)
     PureIO -> withPrec 3 $ braces "pureIO"
     BindIO -> withPrec 3 $ braces "bindIO"
     LoadPointer -> withPrec 3 $ braces "loadPointer"
@@ -88,6 +93,7 @@ prettyExpr = flip $ \case
     InsertBit size -> withPrec 3 $ braces
         $ "insert" <+> prettyBackendType (SBackendInt size)
     TestBit -> withPrec 3 $ braces "testBit"
+    -- TestBit _ -> withPrec 3 $ braces "testBit"
 
 -- | Prettyprints a type with the given precedence.
 prettyType :: Int -> SType tscope t -> Doc ann
