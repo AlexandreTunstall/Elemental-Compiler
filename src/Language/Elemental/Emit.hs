@@ -216,7 +216,28 @@ emitExpr scope rr = \case
         let opp = Backend.Partial (SSucc $ SSucc SZero) $ Backend.InsertBit size
             size = fromIntegral $ toNatural ssize
         propagate1 rr $ OperandANode opp
-    TestBit -> mkLambda rr Branch0Node
+    TestBit -> do
+        rn1 <- newNode $ LamNode () () ()
+        rn2 <- newNode $ DupNode 0 () () ()
+        rn3 <- newNode $ AppNode () () ()
+        rn4 <- newNode $ AppNode () () ()
+        r5 <- mkChurchBool const
+        r6 <- mkChurchBool $ const id
+        rn7 <- newNode $ Branch0CNode () () () ()
+        rn8 <- newNode $ LamNode () () ()
+        rn9 <- newNode $ IOPureNode () ()
+        linkNodes (Ref rn1 0) (Ref rn9 1)
+        linkNodes (Ref rn1 1) (Ref rn2 0)
+        linkNodes (Ref rn1 2) (Ref rn7 0)
+        linkNodes (Ref rn2 1) (Ref rn3 0)
+        linkNodes (Ref rn2 2) (Ref rn4 0)
+        linkNodes (Ref rn3 2) (Ref rn7 2)
+        linkNodes (Ref rn4 2) (Ref rn7 3)
+        linkNodes (Ref rn8 1) (Ref rn7 1)
+        linkNodes (Ref rn8 2) (Ref rn9 0)
+        linkNodes r5 $ Ref rn3 1
+        linkNodes r6 $ Ref rn4 1
+        linkNodes rr $ Ref rn8 0
   where
     coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
     coerceScope SNil = SNil

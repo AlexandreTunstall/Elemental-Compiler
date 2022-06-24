@@ -48,6 +48,7 @@ module Language.Elemental.InteractionNet
     , propagate1
     , propagate2
     , mkLambda
+    , mkChurchBool
     , newNode
     , newName
     , newLabel
@@ -211,8 +212,6 @@ data INetF a
     | Bind1CNode a a a
     -- | (B, B)
     | Bind1FNode (B.Named B.Instruction) a a
-    -- | (i1, IO (a -> a -> a))
-    | Branch0Node a a
     -- | (B, i{n}, B, B)
     | Branch0CNode a a a a
     -- | (i{n}, B, B, B)
@@ -284,7 +283,6 @@ instance Pretty a => Pretty (INetF a) where
         = "Bind1C" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (Bind1FNode instr r0 r1)
         = "Bind1F" <+> pretty r0 <+> pretty r1 <> nest 4 (line <> pretty instr)
-    pretty (Branch0Node r0 r1) = "Branch0" <+> pretty r0 <+> pretty r1
     pretty (Branch0CNode r0 r1 r2 r3)
         = "Branch0C" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
     pretty (Branch0FNode r0 r1 r2 r3)
@@ -577,50 +575,6 @@ reduceNode (Bind0FNode name _ r0) (IOContNode instr _) = do
     linkNodes (Ref rn4 1) (Ref rn5 0)
     linkNodes r0 $ Ref rn2 0
 reduceNode n0@IOContNode {} n1@Bind0FNode {} = reduceNode n1 n0
-reduceNode (Branch0Node _ r0) (OperandNode op _) = do
-    rn1 <- newNode $ LamNode () () ()
-    rn2 <- newNode $ DupNode 0 () () ()
-    rn3 <- newNode $ AppNode () () ()
-    rn4 <- newNode $ AppNode () () ()
-    r5 <- mkChurchBool const
-    r6 <- mkChurchBool $ const id
-    rn7 <- newNode $ Branch1Node op () () ()
-    rn9 <- newNode $ IOPureNode () ()
-    linkNodes (Ref rn1 0) (Ref rn9 1)
-    linkNodes (Ref rn1 1) (Ref rn2 0)
-    linkNodes (Ref rn1 2) (Ref rn7 0)
-    linkNodes (Ref rn2 1) (Ref rn3 0)
-    linkNodes (Ref rn2 2) (Ref rn4 0)
-    linkNodes (Ref rn3 2) (Ref rn7 1)
-    linkNodes (Ref rn4 2) (Ref rn7 2)
-    linkNodes r0 $ Ref rn9 0
-    linkNodes r5 $ Ref rn3 1
-    linkNodes r6 $ Ref rn4 1
-reduceNode n0@OperandNode {} n1@Branch0Node {} = reduceNode n1 n0
-reduceNode (Branch0Node _ r0) (PArgumentNode _ r1 r2) = do
-    rn1 <- newNode $ LamNode () () ()
-    rn2 <- newNode $ DupNode 0 () () ()
-    rn3 <- newNode $ AppNode () () ()
-    rn4 <- newNode $ AppNode () () ()
-    r5 <- mkChurchBool const
-    r6 <- mkChurchBool $ const id
-    rn7 <- newNode $ Branch0CNode () () () ()
-    rn8 <- newNode $ PArgumentNode () () ()
-    rn9 <- newNode $ IOPureNode () ()
-    linkNodes (Ref rn1 0) (Ref rn9 1)
-    linkNodes (Ref rn1 1) (Ref rn2 0)
-    linkNodes (Ref rn1 2) (Ref rn7 0)
-    linkNodes (Ref rn2 1) (Ref rn3 0)
-    linkNodes (Ref rn2 2) (Ref rn4 0)
-    linkNodes (Ref rn3 2) (Ref rn7 2)
-    linkNodes (Ref rn4 2) (Ref rn7 3)
-    linkNodes (Ref rn7 1) (Ref rn8 0)
-    linkNodes r0 $ Ref rn9 0
-    linkNodes r1 $ Ref rn8 1
-    linkNodes r2 $ Ref rn8 2
-    linkNodes r5 $ Ref rn3 1
-    linkNodes r6 $ Ref rn4 1
-reduceNode n0@PArgumentNode {} n1@Branch0Node {} = reduceNode n1 n0
 reduceNode (Branch0FNode _ r0 r1 r2) (OperandNode op _) = do
     rn3 <- newNode $ Branch1Node op () () ()
     linkNodes r0 $ Ref rn3 1
@@ -880,9 +834,6 @@ reduceNode (DupNode lvl _ r0 r1) (Bind1CNode _ r2 r3) = do
     linkNodes r3 $ Ref rn4 2
     dedupIO lvl r0 r1 $ Ref rn4 0
 reduceNode n0@Bind1CNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (Branch0Node _ r2)
-    = commute1 (DupNode lvl) Branch0Node r0 r1 r2
-reduceNode n0@Branch0Node {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Branch0CNode _ r2 r3 r4) = do
     rn5 <- newNode $ Branch0CNode () () () ()
     linkNodes r2 $ Ref rn5 1
@@ -985,8 +936,6 @@ reduceNode (Bind0CNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind0CNode {} = reduceNode n1 n0
 reduceNode (Bind1FNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind1FNode {} = reduceNode n1 n0
-reduceNode (Branch0Node _ r0) (DeadNode _) = propagate1 r0 DeadNode
-reduceNode n0@DeadNode {} n1@Branch0Node {} = reduceNode n1 n0
 reduceNode (LabelNode lbl _ r0) (DeadNode _)
     = propagate1 r0 $ NamedBlockNode $ B.NamedBlockList
         $ IM.singleton (B.unLabel lbl) $ B.Block mempty B.Unreachable
@@ -1046,9 +995,6 @@ reduceNode n0@BoxNode {} n1@Bind1CNode {} = reduceNode n1 n0
 reduceNode (Bind1FNode nbs _ r0) (BoxNode lvl _ r1)
     = commute0 (Bind1FNode nbs) (BoxNode lvl) r0 r1
 reduceNode n0@BoxNode {} n1@Bind1FNode {} = reduceNode n1 n0
-reduceNode (Branch0Node _ r0) (BoxNode lvl _ r1)
-    = commute0 Branch0Node (BoxNode lvl) r0 r1
-reduceNode n0@BoxNode {} n1@Branch0Node {} = reduceNode n1 n0
 reduceNode (Branch0CNode _ r0 r1 r2) (BoxNode lvl _ r3)
     = commute2b Branch0CNode (BoxNode lvl) r0 r1 r2 r3
 reduceNode n0@BoxNode {} n1@Branch0CNode {} = reduceNode n1 n0
