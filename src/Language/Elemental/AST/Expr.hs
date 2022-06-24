@@ -40,6 +40,7 @@ module Language.Elemental.AST.Expr
     , sAllIsOpType
     , HasForeignType(..)
     , ForeignType
+    , sForeignType
     , BuildForeignType
     , sBuildForeignType
     , MarshallableType(..)
@@ -374,6 +375,11 @@ instance (MarshallableType tx, IsOpType (Marshall tx) ~ 'True
 
 -- | The foreign type corresponding to a native type.
 type ForeignType t = BuildForeignType (ForeignArgs t) (ForeignRet t)
+
+-- | Singleton version of 'ForeignType'.
+sForeignType
+    :: HasForeignType t => SType tscope t -> SType tscope (ForeignType t)
+sForeignType t = sBuildForeignType (sForeignArgs t) (sForeignRet t)
 
 {-|
     Builds a type from a list of argument t'BackendType' and a return
