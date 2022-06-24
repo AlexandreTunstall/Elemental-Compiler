@@ -96,16 +96,14 @@ emitDecl scopeTypes scope rr = \case
             bname = backendForeignName fname
         rn1 <- newNode $ ExternalRootNode bname bargs bret ()
         rn2 <- newNode $ AccumIONode mempty () ()
-        rn3 <- newNode $ Bind0CNode () ()
-        rn4 <- newNode $ AppNode () () ()
-        rn5 <- newNode $ LamNode () () ()
-        rn6 <- newNode $ ReturnCNode () ()
+        rn3 <- newNode $ Bind0CNode () () ()
+        rn4 <- newNode $ LamNode () () ()
+        rn5 <- newNode $ ReturnCNode () ()
         linkNodes (Ref rn1 0) (Ref rn2 1)
-        linkNodes (Ref rn2 0) (Ref rn4 2)
+        linkNodes (Ref rn2 0) (Ref rn3 2)
         linkNodes (Ref rn3 1) (Ref rn4 0)
-        linkNodes (Ref rn4 1) (Ref rn5 0)
-        linkNodes (Ref rn5 1) (Ref rn6 1)
-        linkNodes (Ref rn5 2) (Ref rn6 0)
+        linkNodes (Ref rn4 1) (Ref rn5 1)
+        linkNodes (Ref rn4 2) (Ref rn5 0)
         emitExpr scope (Ref rn3 0) $ applyArgs ltret ltargs ops
             $ wrapExport SZero scopeTypes t expr
         pure mempty

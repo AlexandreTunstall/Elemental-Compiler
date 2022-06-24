@@ -204,10 +204,10 @@ data INetF a
     | ReturnFNode a a
     -- | (IO a, (a -> IO b) -> IO b)
     | Bind0BNode a a
-    -- | (IO a, (a -> B) -> B)
-    | Bind0CNode a a
-    -- | (IO a, (a -> B) -> B)
-    | Bind0FNode B.Name a a
+    -- | (IO a, a -> B, B)
+    | Bind0CNode a a a
+    -- | (IO a, a -> B, B)
+    | Bind0FNode B.Name a a a
     -- | (B, IO a, (a -> B) -> B)
     | Bind1CNode a a a
     -- | (B, B)
@@ -216,8 +216,6 @@ data INetF a
     | Branch0CNode a a a a
     -- | (i{n}, B, B, B)
     | Branch0FNode a a a a
-    -- | (B, B, B)
-    | Branch1Node B.Operand a a a
     -- | (CB, NB)
     | LabelNode B.Label a a
     -- | NB
@@ -276,9 +274,10 @@ instance Pretty a => Pretty (INetF a) where
     pretty (ReturnCNode r0 r1) = "ReturnC" <+> pretty r0 <+> pretty r1
     pretty (ReturnFNode r0 r1) = "ReturnF" <+> pretty r0 <+> pretty r1
     pretty (Bind0BNode r0 r1) = "Bind0B" <+> pretty r0 <+> pretty r1
-    pretty (Bind0CNode r0 r1) = "Bind0C" <+> pretty r0 <+> pretty r1
-    pretty (Bind0FNode name r0 r1)
-        = "Bind0F" <+> pretty r0 <+> pretty r1 <+> pretty name
+    pretty (Bind0CNode r0 r1 r2)
+        = "Bind0C" <+> pretty r0 <+> pretty r1 <+> pretty r2
+    pretty (Bind0FNode name r0 r1 r2)
+        = "Bind0F" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty name
     pretty (Bind1CNode r0 r1 r2)
         = "Bind1C" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (Bind1FNode instr r0 r1)
@@ -287,8 +286,6 @@ instance Pretty a => Pretty (INetF a) where
         = "Branch0C" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
     pretty (Branch0FNode r0 r1 r2 r3)
         = "Branch0F" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
-    pretty (Branch1Node opc r0 r1 r2)
-        = "Branch1" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty opc
     pretty (LabelNode lbl r0 r1)
         = "Label" <+> pretty r0 <+> pretty r1 <+> pretty lbl
     pretty (NamedBlockNode nbs r0)
@@ -474,14 +471,12 @@ reduceNode (AccumIONode ib _ r0) (ReturnCNode _ r1) = do
 reduceNode n0@ReturnCNode {} n1@AccumIONode {} = reduceNode n1 n0
 reduceNode (AccumIONode ib _ r0) (Bind1CNode _ r1 r2) = do
     name <- newName
-    rn2 <- newNode $ AccumIONode ib () ()
-    rn3 <- newNode $ Bind0FNode name () ()
-    rn4 <- newNode $ AppNode () () ()
+    rn3 <- newNode $ AccumIONode ib () ()
+    rn4 <- newNode $ Bind0FNode name () () ()
     rn5 <- newNode $ PReduceNode () ()
-    linkNodes (Ref rn2 0) (Ref rn4 2)
-    linkNodes (Ref rn3 0) (Ref rn5 1)
-    linkNodes (Ref rn3 1) (Ref rn4 0)
-    linkNodes r0 $ Ref rn2 1
+    linkNodes (Ref rn3 0) (Ref rn4 2)
+    linkNodes (Ref rn4 0) (Ref rn5 1)
+    linkNodes r0 $ Ref rn3 1
     linkNodes r1 $ Ref rn5 0
     linkNodes r2 $ Ref rn4 1
 reduceNode n0@Bind1CNode {} n1@AccumIONode {} = reduceNode n1 n0
@@ -502,25 +497,6 @@ reduceNode (AccumIONode ib _ r0) (Branch0CNode _ r1 r2 r3) = do
     linkNodes r2 $ Ref rn5 1
     linkNodes r3 $ Ref rn5 2
 reduceNode n0@Branch0CNode {} n1@AccumIONode {} = reduceNode n1 n0
-reduceNode (AccumIONode ib _ r0) (Branch1Node opc _ r1 r2) = do
-    lblt <- newLabel
-    lblf <- newLabel
-    let b = B.Block (B.unIBlock ib) $ B.Branch opc lblt lblf
-    rn3 <- newNode $ AccumNBNode (B.BlockList b mempty) () ()
-    rn4 <- newNode $ Merge0Node () () ()
-    rn5 <- newNode $ LabelNode lblt () ()
-    rn6 <- newNode $ LabelNode lblf () ()
-    rn7 <- newNode $ AccumIONode mempty () ()
-    rn8 <- newNode $ AccumIONode mempty () ()
-    linkNodes (Ref rn3 0) (Ref rn4 2)
-    linkNodes (Ref rn4 0) (Ref rn5 1)
-    linkNodes (Ref rn4 1) (Ref rn6 1)
-    linkNodes (Ref rn5 0) (Ref rn7 1)
-    linkNodes (Ref rn6 0) (Ref rn8 1)
-    linkNodes r0 $ Ref rn3 1
-    linkNodes r1 $ Ref rn7 0
-    linkNodes r2 $ Ref rn8 0
-reduceNode n0@Branch1Node {} n1@AccumIONode {} = reduceNode n1 n0
 reduceNode (AccumNBNode bs _ r0) (NamedBlockNode nbs _)
     = propagate1 r0 $ IONode $ B._namedBlocks %~ (<>) nbs $ bs
 reduceNode n0@NamedBlockNode {} n1@AccumNBNode {} = reduceNode n1 n0
@@ -561,25 +537,23 @@ reduceNode (Bind0BNode _ r0) (PArgumentNode _ r1 r2) = do
     linkNodes r2 $ Ref rn3 2
     reassocCont r0 $ Ref rn3 0
 reduceNode n0@PArgumentNode {} n1@Bind0BNode {} = reduceNode n1 n0
-reduceNode (Bind0CNode _ r0) (IOPureNode _ r1) = linkNodes r0 r1
-reduceNode n0@IOPureNode {} n1@Bind0CNode {} = reduceNode n1 n0
-reduceNode (Bind0FNode name _ r0) (IOContNode instr _) = do
-    let op = B.Reference (B.instrType instr) name
-    rn2 <- newNode $ LamNode () () ()
-    rn3 <- newNode $ Bind1FNode (name B.:= instr) () ()
-    rn4 <- newNode $ AppNode () () ()
-    rn5 <- newNode $ OperandNode op ()
-    linkNodes (Ref rn2 1) (Ref rn4 0)
-    linkNodes (Ref rn2 2) (Ref rn3 0)
-    linkNodes (Ref rn3 1) (Ref rn4 2)
-    linkNodes (Ref rn4 1) (Ref rn5 0)
-    linkNodes r0 $ Ref rn2 0
-reduceNode n0@IOContNode {} n1@Bind0FNode {} = reduceNode n1 n0
-reduceNode (Branch0FNode _ r0 r1 r2) (OperandNode op _) = do
-    rn3 <- newNode $ Branch1Node op () () ()
+reduceNode (Bind0CNode _ r0 r1) (IOPureNode _ r2) = do
+    rn3 <- newNode $ AppNode () () ()
     linkNodes r0 $ Ref rn3 1
     linkNodes r1 $ Ref rn3 2
     linkNodes r2 $ Ref rn3 0
+reduceNode n0@IOPureNode {} n1@Bind0CNode {} = reduceNode n1 n0
+reduceNode (Bind0FNode name _ r0 r1) (IOContNode instr _) = do
+    let op = B.Reference (B.instrType instr) name
+    rn2 <- newNode $ Bind1FNode (name B.:= instr) () ()
+    rn3 <- newNode $ AppNode () () ()
+    rn4 <- newNode $ OperandNode op ()
+    linkNodes (Ref rn2 1) (Ref rn3 2)
+    linkNodes (Ref rn3 1) (Ref rn4 0)
+    linkNodes r0 $ Ref rn3 0
+    linkNodes r1 $ Ref rn2 0
+reduceNode n0@IOContNode {} n1@Bind0FNode {} = reduceNode n1 n0
+reduceNode (Branch0FNode _ r0 r1 r2) (OperandNode op _) = mkBranch1 op r0 r1 r2
 reduceNode n0@OperandNode {} n1@Branch0FNode {} = reduceNode n1 n0
 reduceNode (LabelNode lbl _ r0) (IONode bs _) = propagate1 r0 $ NamedBlockNode
     $ B.NamedBlockList $ IM.insert (B.unLabel lbl) (B.entryBlock bs)
@@ -624,24 +598,22 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Bind1CNode _ r3 r4) = do
     name <- newName
     rn5 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
     rn6 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
-    rn7 <- newNode $ Bind0FNode name () ()
-    rn8 <- newNode $ AppNode () () ()
+    rn7 <- newNode $ Bind0FNode name () () ()
+    rn8 <- newNode $ TSplitNode () () ()
     rn9 <- newNode $ TSplitNode () () ()
-    rn10 <- newNode $ TSplitNode () () ()
-    rn11 <- newNode $ PReduceNode () ()
-    linkNodes (Ref rn5 1) (Ref rn9 1)
-    linkNodes (Ref rn5 2) (Ref rn10 1)
-    linkNodes (Ref rn5 3) (Ref rn11 0)
-    linkNodes (Ref rn6 1) (Ref rn9 2)
-    linkNodes (Ref rn6 2) (Ref rn10 2)
-    linkNodes (Ref rn6 0) (Ref rn8 2)
-    linkNodes (Ref rn7 0) (Ref rn11 1)
-    linkNodes (Ref rn7 1) (Ref rn8 0)
-    linkNodes r0 $ Ref rn9 0
-    linkNodes r1 $ Ref rn10 0
+    rn10 <- newNode $ PReduceNode () ()
+    linkNodes (Ref rn5 1) (Ref rn8 1)
+    linkNodes (Ref rn5 2) (Ref rn9 1)
+    linkNodes (Ref rn5 3) (Ref rn10 0)
+    linkNodes (Ref rn6 1) (Ref rn8 2)
+    linkNodes (Ref rn6 2) (Ref rn9 2)
+    linkNodes (Ref rn6 0) (Ref rn7 2)
+    linkNodes (Ref rn7 0) (Ref rn10 1)
+    linkNodes r0 $ Ref rn8 0
+    linkNodes r1 $ Ref rn9 0
     linkNodes r2 $ Ref rn6 3
     linkNodes r3 $ Ref rn5 0
-    linkNodes r4 $ Ref rn8 1
+    linkNodes r4 $ Ref rn7 1
 reduceNode n0@Bind1CNode {} n1@TBuildNode {} = reduceNode n1 n0
 reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Bind1FNode instr _ r3) = do
     rn4 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
@@ -679,10 +651,6 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Branch0CNode _ r3 r4 r5) = do
     linkNodes r4 $ Ref rn7 0
     linkNodes r5 $ Ref rn8 0
 reduceNode n0@Branch0CNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl t namep _ r0 r1 r2) (Branch1Node opc _ r3 r4)
-    = commute2a' (TBuildNode lvl t namep) TSplitNode TSplitNode
-        (Branch1Node opc) r0 r1 r2 r3 r4
-reduceNode n0@Branch1Node {} n1@TBuildNode {} = reduceNode n1 n0
 reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (PArgumentNode _ r3 r4) = do
     rn5 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
     rn6 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
@@ -825,8 +793,8 @@ reduceNode n0@ReturnCNode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Bind0BNode _ r2)
     = commute1 (DupNode lvl) Bind0BNode r0 r1 r2
 reduceNode n0@Bind0BNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (Bind0CNode _ r2)
-    = commute1 (DupNode lvl) Bind0CNode r0 r1 r2
+reduceNode (DupNode lvl _ r0 r1) (Bind0CNode _ r2 r3)
+    = commute2 (DupNode lvl) Bind0CNode r0 r1 r2 r3
 reduceNode n0@Bind0CNode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Bind1CNode _ r2 r3) = do
     rn4 <- newNode $ Bind1CNode () () ()
@@ -841,12 +809,6 @@ reduceNode (DupNode lvl _ r0 r1) (Branch0CNode _ r2 r3 r4) = do
     linkNodes r4 $ Ref rn5 3
     dedupIO lvl r0 r1 $ Ref rn5 0
 reduceNode n0@Branch0CNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (Branch1Node opc _ r2 r3) = do
-    rn4 <- newNode $ Branch1Node opc () () ()
-    linkNodes r2 $ Ref rn4 1
-    linkNodes r3 $ Ref rn4 2
-    dedupIO lvl r0 r1 $ Ref rn4 0
-reduceNode n0@Branch1Node {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
     | lvl0 == lvl1 = do
         let opp = B.Reference (B.IntType 1) namep
@@ -865,11 +827,7 @@ reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
                 linkNodes (Ref rn6 2) (Ref rn8 1)
                 linkNodes (Ref rn7 1) (Ref rn8 0)
                 linkNodes r4 $ Ref rn8 2
-            BuildIO -> do
-                rn7 <- newNode $ Branch1Node opp () () ()
-                linkNodes (Ref rn5 2) (Ref rn7 1)
-                linkNodes (Ref rn6 2) (Ref rn7 2)
-                linkNodes r4 $ Ref rn7 0
+            BuildIO -> mkBranch1 opp (Ref rn5 2) (Ref rn6 2) r4
     | otherwise = do
         let opp = B.Partial (SSucc $ SSucc SZero)
                 $ mkSelect $ B.Reference (B.IntType 1) namep
@@ -932,7 +890,7 @@ reduceNode (IOContNode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@IOContNode {} = reduceNode n1 n0
 reduceNode (Bind0BNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind0BNode {} = reduceNode n1 n0
-reduceNode (Bind0CNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
+reduceNode (Bind0CNode _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Bind0CNode {} = reduceNode n1 n0
 reduceNode (Bind1FNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind1FNode {} = reduceNode n1 n0
@@ -983,11 +941,11 @@ reduceNode n0@BoxNode {} n1@ReturnFNode {} = reduceNode n1 n0
 reduceNode (Bind0BNode _ r0) (BoxNode lvl _ r1)
     = commute0 Bind0BNode (BoxNode lvl) r0 r1
 reduceNode n0@BoxNode {} n1@Bind0BNode {} = reduceNode n1 n0
-reduceNode (Bind0CNode _ r0) (BoxNode lvl _ r1)
-    = commute0 Bind0CNode (BoxNode lvl) r0 r1
+reduceNode (Bind0CNode _ r0 r1) (BoxNode lvl _ r2)
+    = commute1 Bind0CNode (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@Bind0CNode {} = reduceNode n1 n0
-reduceNode (Bind0FNode name _ r0) (BoxNode lvl _ r1)
-    = commute0 (Bind0FNode name) (BoxNode lvl) r0 r1
+reduceNode (Bind0FNode name _ r0 r1) (BoxNode lvl _ r2)
+    = commute1 (Bind0FNode name) (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@Bind0FNode {} = reduceNode n1 n0
 reduceNode (Bind1CNode _ r0 r1) (BoxNode lvl _ r2)
     = commute1 Bind1CNode (BoxNode lvl) r0 r1 r2
@@ -1001,20 +959,23 @@ reduceNode n0@BoxNode {} n1@Branch0CNode {} = reduceNode n1 n0
 reduceNode (Branch0FNode _ r0 r1 r2) (BoxNode lvl _ r3)
     = commute2b Branch0FNode (BoxNode lvl) r0 r1 r2 r3
 reduceNode n0@BoxNode {} n1@Branch0FNode {} = reduceNode n1 n0
-reduceNode (Branch1Node opp _ r0 r1) (BoxNode lvl _ r2)
-    = commute1 (Branch1Node opp) (BoxNode lvl) r0 r1 r2
-reduceNode n0@BoxNode {} n1@Branch1Node {} = reduceNode n1 n0
 reduceNode (LabelNode lbl _ r0) (BoxNode _ _ r1)
     = do
     rn2 <- newNode $ LabelNode lbl () ()
     linkNodes r0 $ Ref rn2 1
     linkNodes r1 $ Ref rn2 0
 reduceNode n0@BoxNode {} n1@LabelNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3)
-    = commute2b
-        (TBuildNode (if lvl0 < lvl1 then lvl0 else succ lvl0) t namep)
-        (BoxNode lvl1)
-        r0 r1 r2 r3
+reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3) = do
+    let lvl0' = if lvl0 < lvl1 then lvl0 else succ lvl0
+    rn4 <- newNode $ TBuildNode lvl0' t namep () () () ()
+    rn5 <- newNode $ BoxNode lvl1 () ()
+    rn6 <- newNode $ BoxNode lvl1 () ()
+    linkNodes (Ref rn4 1) (Ref rn5 1)
+    linkNodes (Ref rn4 2) (Ref rn6 1)
+    linkNodes r0 $ Ref rn5 0
+    linkNodes r1 $ Ref rn6 0
+    linkNodes r2 $ Ref rn4 3
+    linkNodes r3 $ Ref rn4 0
 reduceNode n0@BoxNode {} n1@TBuildNode {} = reduceNode n1 n0
 reduceNode (TEntryNode name opp _ r0) (BoxNode lvl _ r1)
     = commute0 (TEntryNode name opp) (BoxNode lvl) r0 r1
@@ -1024,8 +985,13 @@ reduceNode (TSplitNode _ r0 r1) (BoxNode lvl _ r2)
 reduceNode n0@BoxNode {} n1@TSplitNode {} = reduceNode n1 n0
 reduceNode (TCloseNode _) (BoxNode _ _ r0) = propagate1 r0 TCloseNode
 reduceNode n0@BoxNode {} n1@TCloseNode {} = reduceNode n1 n0
-reduceNode (TLeaveNode t _ r0 r1) (BoxNode lvl _ r2)
-    = commute1 (TLeaveNode t) (BoxNode lvl) r0 r1 r2
+reduceNode (TLeaveNode t _ r0 r1) (BoxNode lvl _ r2) = do
+    rn3 <- newNode $ TLeaveNode t () () ()
+    rn4 <- newNode $ BoxNode lvl () ()
+    linkNodes (Ref rn3 1) (Ref rn4 1)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn3 2
+    linkNodes r2 $ Ref rn3 0
 reduceNode n0@BoxNode {} n1@TLeaveNode {} = reduceNode n1 n0
 reduceNode (TMatchNode lvl0 _ r0 r1 r2) (BoxNode lvl1 _ r3) = commute2b
     (TMatchNode $ if lvl0 < lvl1 then lvl0 else succ lvl0)
@@ -1035,8 +1001,10 @@ reduceNode n0@BoxNode {} n1@TMatchNode {} = reduceNode n1 n0
 reduceNode (PArgumentNode _ r0 r1) (BoxNode lvl _ r2)
     = commute1 PArgumentNode (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@PArgumentNode {} = reduceNode n1 n0
-reduceNode (PReduceNode _ r0) (BoxNode lvl _ r1)
-    = commute0 PReduceNode (BoxNode lvl) r0 r1
+reduceNode (PReduceNode _ r0) (BoxNode _ _ r1) = do
+    rn2 <- newNode $ PReduceNode () ()
+    linkNodes r0 $ Ref rn2 1
+    linkNodes r1 $ Ref rn2 0
 reduceNode n0@BoxNode {} n1@PReduceNode {} = reduceNode n1 n0
 reduceNode n0 n1 = error . show
     $ "unexpected node pairing" <> line <> pretty n0 <> line <> pretty n1
@@ -1198,31 +1166,29 @@ reassocPure r0 r1 = do
     rn4 <- newNode $ LamNode () () ()
     rn5 <- newNode $ AppNode () () ()
     rn6 <- newNode $ LamNode () () ()
-    rn7 <- newNode $ Bind0CNode () ()
+    rn7 <- newNode $ Bind0CNode () () ()
     rn8 <- newNode $ AppNode () () ()
-    rn9 <- newNode $ AppNode () () ()
+    rn9 <- newNode $ BoxNode 0 () ()
     rn10 <- newNode $ BoxNode 0 () ()
     rn11 <- newNode $ BoxNode 0 () ()
     rn12 <- newNode $ BoxNode 0 () ()
     rn13 <- newNode $ BoxNode 0 () ()
-    rn14 <- newNode $ BoxNode 0 () ()
-    linkNodes (Ref rn2 1) (Ref rn13 0)
+    linkNodes (Ref rn2 1) (Ref rn12 0)
     linkNodes (Ref rn2 2) (Ref rn3 0)
     linkNodes (Ref rn3 1) (Ref rn4 0)
-    linkNodes (Ref rn4 1) (Ref rn10 0)
+    linkNodes (Ref rn4 1) (Ref rn9 0)
     linkNodes (Ref rn4 2) (Ref rn5 2)
-    linkNodes (Ref rn5 0) (Ref rn12 1)
+    linkNodes (Ref rn5 0) (Ref rn11 1)
     linkNodes (Ref rn5 1) (Ref rn6 0)
-    linkNodes (Ref rn6 1) (Ref rn9 1)
-    linkNodes (Ref rn6 2) (Ref rn8 2)
-    linkNodes (Ref rn7 0) (Ref rn9 2)
-    linkNodes (Ref rn7 1) (Ref rn8 0)
-    linkNodes (Ref rn8 1) (Ref rn10 1)
-    linkNodes (Ref rn9 0) (Ref rn14 1)
-    linkNodes (Ref rn11 1) (Ref rn12 0)
-    linkNodes (Ref rn13 1) (Ref rn14 0)
+    linkNodes (Ref rn6 1) (Ref rn8 1)
+    linkNodes (Ref rn6 2) (Ref rn7 2)
+    linkNodes (Ref rn7 0) (Ref rn8 2)
+    linkNodes (Ref rn7 1) (Ref rn9 1)
+    linkNodes (Ref rn8 0) (Ref rn13 1)
+    linkNodes (Ref rn10 1) (Ref rn11 0)
+    linkNodes (Ref rn12 1) (Ref rn13 0)
     linkNodes r0 $ Ref rn2 0
-    linkNodes r1 $ Ref rn11 0
+    linkNodes r1 $ Ref rn10 0
 {-# INLINABLE reassocPure #-}
 
 -- | @r0 = \a -> IOPure (\b -> Bind1C r1 (\c -> Bind0C (a c) b))@
@@ -1235,12 +1201,11 @@ reassocCont r0 r1 = do
     rn6 <- newNode $ BoxNode 0 () ()
     rn7 <- newNode $ BoxNode 0 () ()
     rn8 <- newNode $ LamNode () () ()
-    rn9 <- newNode $ Bind0CNode () ()
+    rn9 <- newNode $ Bind0CNode () () ()
     rn10 <- newNode $ AppNode () () ()
     rn11 <- newNode $ BoxNode 0 () ()
     rn12 <- newNode $ BoxNode 0 () ()
     rn13 <- newNode $ BoxNode 0 () ()
-    rn14 <- newNode $ AppNode () () ()
     linkNodes (Ref rn2 1) (Ref rn11 0)
     linkNodes (Ref rn2 2) (Ref rn3 0)
     linkNodes (Ref rn3 1) (Ref rn4 0)
@@ -1250,15 +1215,35 @@ reassocCont r0 r1 = do
     linkNodes (Ref rn5 2) (Ref rn8 0)
     linkNodes (Ref rn6 1) (Ref rn7 0)
     linkNodes (Ref rn8 1) (Ref rn10 1)
-    linkNodes (Ref rn8 2) (Ref rn14 2)
+    linkNodes (Ref rn8 2) (Ref rn9 2)
     linkNodes (Ref rn9 0) (Ref rn10 2)
-    linkNodes (Ref rn9 1) (Ref rn14 0)
+    linkNodes (Ref rn9 1) (Ref rn13 1)
     linkNodes (Ref rn10 0) (Ref rn12 1)
     linkNodes (Ref rn11 1) (Ref rn12 0)
-    linkNodes (Ref rn13 1) (Ref rn14 1)
     linkNodes r0 $ Ref rn2 0
     linkNodes r1 $ Ref rn6 0
 {-# INLINABLE reassocCont #-}
+
+mkBranch1 :: HasRewriter sig m => B.Operand -> Ref -> Ref -> Ref -> m ()
+mkBranch1 opc r0 r1 r2 = do
+    lblt <- newLabel
+    lblf <- newLabel
+    let b = B.Block mempty $ B.Branch opc lblt lblf
+    rn3 <- newNode $ AccumNBNode (B.BlockList b mempty) () ()
+    rn4 <- newNode $ Merge0Node () () ()
+    rn5 <- newNode $ LabelNode lblt () ()
+    rn6 <- newNode $ LabelNode lblf () ()
+    rn7 <- newNode $ AccumIONode mempty () ()
+    rn8 <- newNode $ AccumIONode mempty () ()
+    linkNodes (Ref rn3 0) (Ref rn4 2)
+    linkNodes (Ref rn4 0) (Ref rn5 1)
+    linkNodes (Ref rn4 1) (Ref rn6 1)
+    linkNodes (Ref rn5 0) (Ref rn7 1)
+    linkNodes (Ref rn6 0) (Ref rn8 1)
+    linkNodes r0 $ Ref rn7 0
+    linkNodes r1 $ Ref rn8 0
+    linkNodes r2 $ Ref rn3 1
+{-# INLINABLE mkBranch1 #-}
 
 mkLambda :: HasRewriter sig m => Ref -> (() -> () -> INetF ()) -> m ()
 mkLambda r0 mk1 = do

@@ -269,7 +269,7 @@ data NodeHead
     | IOHead | IOAHead | IOPHead | IOPureHead | IOContHead
     | ReturnCHead | ReturnFHead
     | Bind0BHead | Bind0CHead | Bind0FHead | Bind1CHead | Bind1FHead
-    | Branch0CHead | Branch0FHead | Branch1Head
+    | Branch0CHead | Branch0FHead
     | LabelHead | NamedBlockHead | Merge0Head | Merge1Head
     | TBuildHead | TEntryHead | TSplitHead
     | TCloseHead | TLeaveHead | TMatchHead
@@ -303,7 +303,6 @@ instance Pretty NodeHead where
     pretty Bind1FHead = "Bind1F"
     pretty Branch0CHead = "Branch0C"
     pretty Branch0FHead = "Branch0F"
-    pretty Branch1Head = "Branch1"
     pretty LabelHead = "Label"
     pretty NamedBlockHead = "NamedBlock"
     pretty Merge0Head = "Merge0"
@@ -345,7 +344,6 @@ nodeHead x = case x of
     Bind1FNode {} -> Bind1FHead
     Branch0CNode {} -> Branch0CHead
     Branch0FNode {} -> Branch0FHead
-    Branch1Node {} -> Branch1Head
     LabelNode {} -> LabelHead
     NamedBlockNode {} -> NamedBlockHead
     Merge0Node {} -> Merge0Head
