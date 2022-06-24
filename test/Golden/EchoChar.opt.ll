@@ -6,1864 +6,6 @@ declare void @putchar(i8) local_unnamed_addr
 ; Function Attrs: nofree nounwind
 declare i8 @getchar() local_unnamed_addr #0
 
-define private fastcc void @__elem_2(i1, i8, i1, i1) unnamed_addr {
-  %5 = and i8 %1, 16
-  %6 = icmp eq i8 %5, 0
-  %7 = and i8 %1, 8
-  %8 = icmp eq i8 %7, 0
-  br i1 %6, label %11, label %9
-
-9:                                                ; preds = %4
-  br i1 %8, label %10, label %codeRepl.i
-
-codeRepl.i:                                       ; preds = %9
-  tail call fastcc void @__elem_4(i1 true, i8 %1, i1 %2, i1 %3, i1 %0, i1 true)
-  br label %__elem_3.2.exit
-
-10:                                               ; preds = %9
-  tail call fastcc void @__elem_4(i1 false, i8 %1, i1 %2, i1 %3, i1 %0, i1 true)
-  br label %__elem_3.2.exit
-
-__elem_3.2.exit:                                  ; preds = %codeRepl.i1, %12, %10, %codeRepl.i
-  ret void
-
-11:                                               ; preds = %4
-  br i1 %8, label %12, label %codeRepl.i1
-
-codeRepl.i1:                                      ; preds = %11
-  tail call fastcc void @__elem_4(i1 true, i8 %1, i1 %2, i1 %3, i1 %0, i1 false)
-  br label %__elem_3.2.exit
-
-12:                                               ; preds = %11
-  tail call fastcc void @__elem_4(i1 false, i8 %1, i1 %2, i1 %3, i1 %0, i1 false)
-  br label %__elem_3.2.exit
-}
-
-define private fastcc void @__elem_4(i1, i8, i1, i1, i1, i1) unnamed_addr {
-  %7 = and i8 %1, 4
-  %8 = icmp eq i8 %7, 0
-  %9 = and i8 %1, 2
-  %10 = icmp eq i8 %9, 0
-  br i1 %8, label %13, label %11
-
-11:                                               ; preds = %6
-  br i1 %10, label %12, label %codeRepl.i
-
-codeRepl.i:                                       ; preds = %11
-  tail call fastcc void @__elem_6(i1 true, i8 %1, i1 %2, i1 %3, i1 %4, i1 %5, i1 %0, i1 true)
-  br label %__elem_5.1.exit
-
-12:                                               ; preds = %11
-  tail call fastcc void @__elem_6(i1 false, i8 %1, i1 %2, i1 %3, i1 %4, i1 %5, i1 %0, i1 true)
-  br label %__elem_5.1.exit
-
-__elem_5.1.exit:                                  ; preds = %codeRepl.i1, %14, %12, %codeRepl.i
-  ret void
-
-13:                                               ; preds = %6
-  br i1 %10, label %14, label %codeRepl.i1
-
-codeRepl.i1:                                      ; preds = %13
-  tail call fastcc void @__elem_6(i1 true, i8 %1, i1 %2, i1 %3, i1 %4, i1 %5, i1 %0, i1 false)
-  br label %__elem_5.1.exit
-
-14:                                               ; preds = %13
-  tail call fastcc void @__elem_6(i1 false, i8 %1, i1 %2, i1 %3, i1 %4, i1 %5, i1 %0, i1 false)
-  br label %__elem_5.1.exit
-}
-
-define private fastcc void @__elem_6(i1, i8, i1, i1, i1, i1, i1, i1) unnamed_addr {
-  %9 = and i8 %1, 1
-  %10 = icmp eq i8 %9, 0
-  br i1 %10, label %12, label %11
-
-11:                                               ; preds = %8
-  br i1 %2, label %13, label %14
-
-12:                                               ; preds = %8
-  br i1 %2, label %15, label %16
-
-13:                                               ; preds = %11
-  br i1 %3, label %17, label %18
-
-14:                                               ; preds = %11
-  br i1 %3, label %47, label %48
-
-15:                                               ; preds = %12
-  br i1 %3, label %77, label %78
-
-16:                                               ; preds = %12
-  br i1 %3, label %107, label %108
-
-17:                                               ; preds = %13
-  br i1 %4, label %19, label %20
-
-18:                                               ; preds = %13
-  br i1 %4, label %33, label %34
-
-19:                                               ; preds = %17
-  br i1 %5, label %21, label %22
-
-20:                                               ; preds = %17
-  br i1 %5, label %27, label %28
-
-21:                                               ; preds = %19
-  br i1 %6, label %23, label %24
-
-22:                                               ; preds = %19
-  br i1 %6, label %25, label %26
-
-23:                                               ; preds = %21
-  br i1 %7, label %137, label %138
-
-24:                                               ; preds = %21
-  br i1 %7, label %139, label %140
-
-25:                                               ; preds = %22
-  br i1 %7, label %141, label %142
-
-26:                                               ; preds = %22
-  br i1 %7, label %143, label %144
-
-27:                                               ; preds = %20
-  br i1 %6, label %29, label %30
-
-28:                                               ; preds = %20
-  br i1 %6, label %31, label %32
-
-29:                                               ; preds = %27
-  br i1 %7, label %145, label %146
-
-30:                                               ; preds = %27
-  br i1 %7, label %147, label %148
-
-31:                                               ; preds = %28
-  br i1 %7, label %149, label %150
-
-32:                                               ; preds = %28
-  br i1 %7, label %151, label %152
-
-33:                                               ; preds = %18
-  br i1 %5, label %35, label %36
-
-34:                                               ; preds = %18
-  br i1 %5, label %41, label %42
-
-35:                                               ; preds = %33
-  br i1 %6, label %37, label %38
-
-36:                                               ; preds = %33
-  br i1 %6, label %39, label %40
-
-37:                                               ; preds = %35
-  br i1 %7, label %153, label %154
-
-38:                                               ; preds = %35
-  br i1 %7, label %155, label %156
-
-39:                                               ; preds = %36
-  br i1 %7, label %157, label %158
-
-40:                                               ; preds = %36
-  br i1 %7, label %159, label %160
-
-41:                                               ; preds = %34
-  br i1 %6, label %43, label %44
-
-42:                                               ; preds = %34
-  br i1 %6, label %45, label %46
-
-43:                                               ; preds = %41
-  br i1 %7, label %161, label %162
-
-44:                                               ; preds = %41
-  br i1 %7, label %163, label %164
-
-45:                                               ; preds = %42
-  br i1 %7, label %165, label %166
-
-46:                                               ; preds = %42
-  br i1 %7, label %167, label %168
-
-47:                                               ; preds = %14
-  br i1 %4, label %49, label %50
-
-48:                                               ; preds = %14
-  br i1 %4, label %63, label %64
-
-49:                                               ; preds = %47
-  br i1 %5, label %51, label %52
-
-50:                                               ; preds = %47
-  br i1 %5, label %57, label %58
-
-51:                                               ; preds = %49
-  br i1 %6, label %53, label %54
-
-52:                                               ; preds = %49
-  br i1 %6, label %55, label %56
-
-53:                                               ; preds = %51
-  br i1 %7, label %169, label %170
-
-54:                                               ; preds = %51
-  br i1 %7, label %171, label %172
-
-55:                                               ; preds = %52
-  br i1 %7, label %173, label %174
-
-56:                                               ; preds = %52
-  br i1 %7, label %175, label %176
-
-57:                                               ; preds = %50
-  br i1 %6, label %59, label %60
-
-58:                                               ; preds = %50
-  br i1 %6, label %61, label %62
-
-59:                                               ; preds = %57
-  br i1 %7, label %177, label %178
-
-60:                                               ; preds = %57
-  br i1 %7, label %179, label %180
-
-61:                                               ; preds = %58
-  br i1 %7, label %181, label %182
-
-62:                                               ; preds = %58
-  br i1 %7, label %183, label %184
-
-63:                                               ; preds = %48
-  br i1 %5, label %65, label %66
-
-64:                                               ; preds = %48
-  br i1 %5, label %71, label %72
-
-65:                                               ; preds = %63
-  br i1 %6, label %67, label %68
-
-66:                                               ; preds = %63
-  br i1 %6, label %69, label %70
-
-67:                                               ; preds = %65
-  br i1 %7, label %185, label %186
-
-68:                                               ; preds = %65
-  br i1 %7, label %187, label %188
-
-69:                                               ; preds = %66
-  br i1 %7, label %189, label %190
-
-70:                                               ; preds = %66
-  br i1 %7, label %191, label %192
-
-71:                                               ; preds = %64
-  br i1 %6, label %73, label %74
-
-72:                                               ; preds = %64
-  br i1 %6, label %75, label %76
-
-73:                                               ; preds = %71
-  br i1 %7, label %193, label %194
-
-74:                                               ; preds = %71
-  br i1 %7, label %195, label %196
-
-75:                                               ; preds = %72
-  br i1 %7, label %197, label %198
-
-76:                                               ; preds = %72
-  br i1 %7, label %199, label %200
-
-77:                                               ; preds = %15
-  br i1 %4, label %79, label %80
-
-78:                                               ; preds = %15
-  br i1 %4, label %93, label %94
-
-79:                                               ; preds = %77
-  br i1 %5, label %81, label %82
-
-80:                                               ; preds = %77
-  br i1 %5, label %87, label %88
-
-81:                                               ; preds = %79
-  br i1 %6, label %83, label %84
-
-82:                                               ; preds = %79
-  br i1 %6, label %85, label %86
-
-83:                                               ; preds = %81
-  br i1 %7, label %201, label %202
-
-84:                                               ; preds = %81
-  br i1 %7, label %203, label %204
-
-85:                                               ; preds = %82
-  br i1 %7, label %205, label %206
-
-86:                                               ; preds = %82
-  br i1 %7, label %207, label %208
-
-87:                                               ; preds = %80
-  br i1 %6, label %89, label %90
-
-88:                                               ; preds = %80
-  br i1 %6, label %91, label %92
-
-89:                                               ; preds = %87
-  br i1 %7, label %209, label %210
-
-90:                                               ; preds = %87
-  br i1 %7, label %211, label %212
-
-91:                                               ; preds = %88
-  br i1 %7, label %213, label %214
-
-92:                                               ; preds = %88
-  br i1 %7, label %215, label %216
-
-93:                                               ; preds = %78
-  br i1 %5, label %95, label %96
-
-94:                                               ; preds = %78
-  br i1 %5, label %101, label %102
-
-95:                                               ; preds = %93
-  br i1 %6, label %97, label %98
-
-96:                                               ; preds = %93
-  br i1 %6, label %99, label %100
-
-97:                                               ; preds = %95
-  br i1 %7, label %217, label %218
-
-98:                                               ; preds = %95
-  br i1 %7, label %219, label %220
-
-99:                                               ; preds = %96
-  br i1 %7, label %221, label %222
-
-100:                                              ; preds = %96
-  br i1 %7, label %223, label %224
-
-101:                                              ; preds = %94
-  br i1 %6, label %103, label %104
-
-102:                                              ; preds = %94
-  br i1 %6, label %105, label %106
-
-103:                                              ; preds = %101
-  br i1 %7, label %225, label %226
-
-104:                                              ; preds = %101
-  br i1 %7, label %227, label %228
-
-105:                                              ; preds = %102
-  br i1 %7, label %229, label %230
-
-106:                                              ; preds = %102
-  br i1 %7, label %231, label %232
-
-107:                                              ; preds = %16
-  br i1 %4, label %109, label %110
-
-108:                                              ; preds = %16
-  br i1 %4, label %123, label %124
-
-109:                                              ; preds = %107
-  br i1 %5, label %111, label %112
-
-110:                                              ; preds = %107
-  br i1 %5, label %117, label %118
-
-111:                                              ; preds = %109
-  br i1 %6, label %113, label %114
-
-112:                                              ; preds = %109
-  br i1 %6, label %115, label %116
-
-113:                                              ; preds = %111
-  br i1 %7, label %233, label %234
-
-114:                                              ; preds = %111
-  br i1 %7, label %235, label %236
-
-115:                                              ; preds = %112
-  br i1 %7, label %237, label %238
-
-116:                                              ; preds = %112
-  br i1 %7, label %239, label %240
-
-117:                                              ; preds = %110
-  br i1 %6, label %119, label %120
-
-118:                                              ; preds = %110
-  br i1 %6, label %121, label %122
-
-119:                                              ; preds = %117
-  br i1 %7, label %241, label %242
-
-120:                                              ; preds = %117
-  br i1 %7, label %243, label %244
-
-121:                                              ; preds = %118
-  br i1 %7, label %245, label %246
-
-122:                                              ; preds = %118
-  br i1 %7, label %247, label %248
-
-123:                                              ; preds = %108
-  br i1 %5, label %125, label %126
-
-124:                                              ; preds = %108
-  br i1 %5, label %131, label %132
-
-125:                                              ; preds = %123
-  br i1 %6, label %127, label %128
-
-126:                                              ; preds = %123
-  br i1 %6, label %129, label %130
-
-127:                                              ; preds = %125
-  br i1 %7, label %249, label %250
-
-128:                                              ; preds = %125
-  br i1 %7, label %251, label %252
-
-129:                                              ; preds = %126
-  br i1 %7, label %253, label %254
-
-130:                                              ; preds = %126
-  br i1 %7, label %255, label %256
-
-131:                                              ; preds = %124
-  br i1 %6, label %133, label %134
-
-132:                                              ; preds = %124
-  br i1 %6, label %135, label %136
-
-133:                                              ; preds = %131
-  br i1 %7, label %257, label %258
-
-134:                                              ; preds = %131
-  br i1 %7, label %259, label %260
-
-135:                                              ; preds = %132
-  br i1 %7, label %261, label %262
-
-136:                                              ; preds = %132
-  br i1 %7, label %263, label %264
-
-137:                                              ; preds = %23
-  br i1 %0, label %265, label %266
-
-138:                                              ; preds = %23
-  br i1 %0, label %267, label %268
-
-139:                                              ; preds = %24
-  br i1 %0, label %269, label %270
-
-140:                                              ; preds = %24
-  br i1 %0, label %271, label %272
-
-141:                                              ; preds = %25
-  br i1 %0, label %273, label %274
-
-142:                                              ; preds = %25
-  br i1 %0, label %275, label %276
-
-143:                                              ; preds = %26
-  br i1 %0, label %277, label %278
-
-144:                                              ; preds = %26
-  br i1 %0, label %279, label %280
-
-145:                                              ; preds = %29
-  br i1 %0, label %281, label %282
-
-146:                                              ; preds = %29
-  br i1 %0, label %283, label %284
-
-147:                                              ; preds = %30
-  br i1 %0, label %285, label %286
-
-148:                                              ; preds = %30
-  br i1 %0, label %287, label %288
-
-149:                                              ; preds = %31
-  br i1 %0, label %289, label %290
-
-150:                                              ; preds = %31
-  br i1 %0, label %291, label %292
-
-151:                                              ; preds = %32
-  br i1 %0, label %293, label %294
-
-152:                                              ; preds = %32
-  br i1 %0, label %295, label %296
-
-153:                                              ; preds = %37
-  br i1 %0, label %297, label %298
-
-154:                                              ; preds = %37
-  br i1 %0, label %299, label %300
-
-155:                                              ; preds = %38
-  br i1 %0, label %301, label %302
-
-156:                                              ; preds = %38
-  br i1 %0, label %303, label %304
-
-157:                                              ; preds = %39
-  br i1 %0, label %305, label %306
-
-158:                                              ; preds = %39
-  br i1 %0, label %307, label %308
-
-159:                                              ; preds = %40
-  br i1 %0, label %309, label %310
-
-160:                                              ; preds = %40
-  br i1 %0, label %311, label %312
-
-161:                                              ; preds = %43
-  br i1 %0, label %313, label %314
-
-162:                                              ; preds = %43
-  br i1 %0, label %315, label %316
-
-163:                                              ; preds = %44
-  br i1 %0, label %317, label %318
-
-164:                                              ; preds = %44
-  br i1 %0, label %319, label %320
-
-165:                                              ; preds = %45
-  br i1 %0, label %321, label %322
-
-166:                                              ; preds = %45
-  br i1 %0, label %323, label %324
-
-167:                                              ; preds = %46
-  br i1 %0, label %325, label %326
-
-168:                                              ; preds = %46
-  br i1 %0, label %327, label %328
-
-169:                                              ; preds = %53
-  br i1 %0, label %329, label %330
-
-170:                                              ; preds = %53
-  br i1 %0, label %331, label %332
-
-171:                                              ; preds = %54
-  br i1 %0, label %333, label %334
-
-172:                                              ; preds = %54
-  br i1 %0, label %335, label %336
-
-173:                                              ; preds = %55
-  br i1 %0, label %337, label %338
-
-174:                                              ; preds = %55
-  br i1 %0, label %339, label %340
-
-175:                                              ; preds = %56
-  br i1 %0, label %341, label %342
-
-176:                                              ; preds = %56
-  br i1 %0, label %343, label %344
-
-177:                                              ; preds = %59
-  br i1 %0, label %345, label %346
-
-178:                                              ; preds = %59
-  br i1 %0, label %347, label %348
-
-179:                                              ; preds = %60
-  br i1 %0, label %349, label %350
-
-180:                                              ; preds = %60
-  br i1 %0, label %351, label %352
-
-181:                                              ; preds = %61
-  br i1 %0, label %353, label %354
-
-182:                                              ; preds = %61
-  br i1 %0, label %355, label %356
-
-183:                                              ; preds = %62
-  br i1 %0, label %357, label %358
-
-184:                                              ; preds = %62
-  br i1 %0, label %359, label %360
-
-185:                                              ; preds = %67
-  br i1 %0, label %361, label %362
-
-186:                                              ; preds = %67
-  br i1 %0, label %363, label %364
-
-187:                                              ; preds = %68
-  br i1 %0, label %365, label %366
-
-188:                                              ; preds = %68
-  br i1 %0, label %367, label %368
-
-189:                                              ; preds = %69
-  br i1 %0, label %369, label %370
-
-190:                                              ; preds = %69
-  br i1 %0, label %371, label %372
-
-191:                                              ; preds = %70
-  br i1 %0, label %373, label %374
-
-192:                                              ; preds = %70
-  br i1 %0, label %375, label %376
-
-193:                                              ; preds = %73
-  br i1 %0, label %377, label %378
-
-194:                                              ; preds = %73
-  br i1 %0, label %379, label %380
-
-195:                                              ; preds = %74
-  br i1 %0, label %381, label %382
-
-196:                                              ; preds = %74
-  br i1 %0, label %383, label %384
-
-197:                                              ; preds = %75
-  br i1 %0, label %385, label %386
-
-198:                                              ; preds = %75
-  br i1 %0, label %387, label %388
-
-199:                                              ; preds = %76
-  br i1 %0, label %389, label %390
-
-200:                                              ; preds = %76
-  br i1 %0, label %391, label %392
-
-201:                                              ; preds = %83
-  br i1 %0, label %393, label %394
-
-202:                                              ; preds = %83
-  br i1 %0, label %395, label %396
-
-203:                                              ; preds = %84
-  br i1 %0, label %397, label %398
-
-204:                                              ; preds = %84
-  br i1 %0, label %399, label %400
-
-205:                                              ; preds = %85
-  br i1 %0, label %401, label %402
-
-206:                                              ; preds = %85
-  br i1 %0, label %403, label %404
-
-207:                                              ; preds = %86
-  br i1 %0, label %405, label %406
-
-208:                                              ; preds = %86
-  br i1 %0, label %407, label %408
-
-209:                                              ; preds = %89
-  br i1 %0, label %409, label %410
-
-210:                                              ; preds = %89
-  br i1 %0, label %411, label %412
-
-211:                                              ; preds = %90
-  br i1 %0, label %413, label %414
-
-212:                                              ; preds = %90
-  br i1 %0, label %415, label %416
-
-213:                                              ; preds = %91
-  br i1 %0, label %417, label %418
-
-214:                                              ; preds = %91
-  br i1 %0, label %419, label %420
-
-215:                                              ; preds = %92
-  br i1 %0, label %421, label %422
-
-216:                                              ; preds = %92
-  br i1 %0, label %423, label %424
-
-217:                                              ; preds = %97
-  br i1 %0, label %425, label %426
-
-218:                                              ; preds = %97
-  br i1 %0, label %427, label %428
-
-219:                                              ; preds = %98
-  br i1 %0, label %429, label %430
-
-220:                                              ; preds = %98
-  br i1 %0, label %431, label %432
-
-221:                                              ; preds = %99
-  br i1 %0, label %433, label %434
-
-222:                                              ; preds = %99
-  br i1 %0, label %435, label %436
-
-223:                                              ; preds = %100
-  br i1 %0, label %437, label %438
-
-224:                                              ; preds = %100
-  br i1 %0, label %439, label %440
-
-225:                                              ; preds = %103
-  br i1 %0, label %441, label %442
-
-226:                                              ; preds = %103
-  br i1 %0, label %443, label %444
-
-227:                                              ; preds = %104
-  br i1 %0, label %445, label %446
-
-228:                                              ; preds = %104
-  br i1 %0, label %447, label %448
-
-229:                                              ; preds = %105
-  br i1 %0, label %449, label %450
-
-230:                                              ; preds = %105
-  br i1 %0, label %451, label %452
-
-231:                                              ; preds = %106
-  br i1 %0, label %453, label %454
-
-232:                                              ; preds = %106
-  br i1 %0, label %455, label %456
-
-233:                                              ; preds = %113
-  br i1 %0, label %457, label %458
-
-234:                                              ; preds = %113
-  br i1 %0, label %459, label %460
-
-235:                                              ; preds = %114
-  br i1 %0, label %461, label %462
-
-236:                                              ; preds = %114
-  br i1 %0, label %463, label %464
-
-237:                                              ; preds = %115
-  br i1 %0, label %465, label %466
-
-238:                                              ; preds = %115
-  br i1 %0, label %467, label %468
-
-239:                                              ; preds = %116
-  br i1 %0, label %469, label %470
-
-240:                                              ; preds = %116
-  br i1 %0, label %471, label %472
-
-241:                                              ; preds = %119
-  br i1 %0, label %473, label %474
-
-242:                                              ; preds = %119
-  br i1 %0, label %475, label %476
-
-243:                                              ; preds = %120
-  br i1 %0, label %477, label %478
-
-244:                                              ; preds = %120
-  br i1 %0, label %479, label %480
-
-245:                                              ; preds = %121
-  br i1 %0, label %481, label %482
-
-246:                                              ; preds = %121
-  br i1 %0, label %483, label %484
-
-247:                                              ; preds = %122
-  br i1 %0, label %485, label %486
-
-248:                                              ; preds = %122
-  br i1 %0, label %487, label %488
-
-249:                                              ; preds = %127
-  br i1 %0, label %489, label %490
-
-250:                                              ; preds = %127
-  br i1 %0, label %491, label %492
-
-251:                                              ; preds = %128
-  br i1 %0, label %493, label %494
-
-252:                                              ; preds = %128
-  br i1 %0, label %495, label %496
-
-253:                                              ; preds = %129
-  br i1 %0, label %497, label %498
-
-254:                                              ; preds = %129
-  br i1 %0, label %499, label %500
-
-255:                                              ; preds = %130
-  br i1 %0, label %501, label %502
-
-256:                                              ; preds = %130
-  br i1 %0, label %503, label %504
-
-257:                                              ; preds = %133
-  br i1 %0, label %505, label %506
-
-258:                                              ; preds = %133
-  br i1 %0, label %507, label %508
-
-259:                                              ; preds = %134
-  br i1 %0, label %509, label %510
-
-260:                                              ; preds = %134
-  br i1 %0, label %511, label %512
-
-261:                                              ; preds = %135
-  br i1 %0, label %513, label %514
-
-262:                                              ; preds = %135
-  br i1 %0, label %515, label %516
-
-263:                                              ; preds = %136
-  br i1 %0, label %517, label %518
-
-264:                                              ; preds = %136
-  br i1 %0, label %519, label %520
-
-265:                                              ; preds = %137
-  tail call void @putchar(i8 -1)
-  ret void
-
-266:                                              ; preds = %137
-  tail call void @putchar(i8 -3)
-  ret void
-
-267:                                              ; preds = %138
-  tail call void @putchar(i8 -5)
-  ret void
-
-268:                                              ; preds = %138
-  tail call void @putchar(i8 -7)
-  ret void
-
-269:                                              ; preds = %139
-  tail call void @putchar(i8 -9)
-  ret void
-
-270:                                              ; preds = %139
-  tail call void @putchar(i8 -11)
-  ret void
-
-271:                                              ; preds = %140
-  tail call void @putchar(i8 -13)
-  ret void
-
-272:                                              ; preds = %140
-  tail call void @putchar(i8 -15)
-  ret void
-
-273:                                              ; preds = %141
-  tail call void @putchar(i8 -17)
-  ret void
-
-274:                                              ; preds = %141
-  tail call void @putchar(i8 -19)
-  ret void
-
-275:                                              ; preds = %142
-  tail call void @putchar(i8 -21)
-  ret void
-
-276:                                              ; preds = %142
-  tail call void @putchar(i8 -23)
-  ret void
-
-277:                                              ; preds = %143
-  tail call void @putchar(i8 -25)
-  ret void
-
-278:                                              ; preds = %143
-  tail call void @putchar(i8 -27)
-  ret void
-
-279:                                              ; preds = %144
-  tail call void @putchar(i8 -29)
-  ret void
-
-280:                                              ; preds = %144
-  tail call void @putchar(i8 -31)
-  ret void
-
-281:                                              ; preds = %145
-  tail call void @putchar(i8 -33)
-  ret void
-
-282:                                              ; preds = %145
-  tail call void @putchar(i8 -35)
-  ret void
-
-283:                                              ; preds = %146
-  tail call void @putchar(i8 -37)
-  ret void
-
-284:                                              ; preds = %146
-  tail call void @putchar(i8 -39)
-  ret void
-
-285:                                              ; preds = %147
-  tail call void @putchar(i8 -41)
-  ret void
-
-286:                                              ; preds = %147
-  tail call void @putchar(i8 -43)
-  ret void
-
-287:                                              ; preds = %148
-  tail call void @putchar(i8 -45)
-  ret void
-
-288:                                              ; preds = %148
-  tail call void @putchar(i8 -47)
-  ret void
-
-289:                                              ; preds = %149
-  tail call void @putchar(i8 -49)
-  ret void
-
-290:                                              ; preds = %149
-  tail call void @putchar(i8 -51)
-  ret void
-
-291:                                              ; preds = %150
-  tail call void @putchar(i8 -53)
-  ret void
-
-292:                                              ; preds = %150
-  tail call void @putchar(i8 -55)
-  ret void
-
-293:                                              ; preds = %151
-  tail call void @putchar(i8 -57)
-  ret void
-
-294:                                              ; preds = %151
-  tail call void @putchar(i8 -59)
-  ret void
-
-295:                                              ; preds = %152
-  tail call void @putchar(i8 -61)
-  ret void
-
-296:                                              ; preds = %152
-  tail call void @putchar(i8 -63)
-  ret void
-
-297:                                              ; preds = %153
-  tail call void @putchar(i8 -65)
-  ret void
-
-298:                                              ; preds = %153
-  tail call void @putchar(i8 -67)
-  ret void
-
-299:                                              ; preds = %154
-  tail call void @putchar(i8 -69)
-  ret void
-
-300:                                              ; preds = %154
-  tail call void @putchar(i8 -71)
-  ret void
-
-301:                                              ; preds = %155
-  tail call void @putchar(i8 -73)
-  ret void
-
-302:                                              ; preds = %155
-  tail call void @putchar(i8 -75)
-  ret void
-
-303:                                              ; preds = %156
-  tail call void @putchar(i8 -77)
-  ret void
-
-304:                                              ; preds = %156
-  tail call void @putchar(i8 -79)
-  ret void
-
-305:                                              ; preds = %157
-  tail call void @putchar(i8 -81)
-  ret void
-
-306:                                              ; preds = %157
-  tail call void @putchar(i8 -83)
-  ret void
-
-307:                                              ; preds = %158
-  tail call void @putchar(i8 -85)
-  ret void
-
-308:                                              ; preds = %158
-  tail call void @putchar(i8 -87)
-  ret void
-
-309:                                              ; preds = %159
-  tail call void @putchar(i8 -89)
-  ret void
-
-310:                                              ; preds = %159
-  tail call void @putchar(i8 -91)
-  ret void
-
-311:                                              ; preds = %160
-  tail call void @putchar(i8 -93)
-  ret void
-
-312:                                              ; preds = %160
-  tail call void @putchar(i8 -95)
-  ret void
-
-313:                                              ; preds = %161
-  tail call void @putchar(i8 -97)
-  ret void
-
-314:                                              ; preds = %161
-  tail call void @putchar(i8 -99)
-  ret void
-
-315:                                              ; preds = %162
-  tail call void @putchar(i8 -101)
-  ret void
-
-316:                                              ; preds = %162
-  tail call void @putchar(i8 -103)
-  ret void
-
-317:                                              ; preds = %163
-  tail call void @putchar(i8 -105)
-  ret void
-
-318:                                              ; preds = %163
-  tail call void @putchar(i8 -107)
-  ret void
-
-319:                                              ; preds = %164
-  tail call void @putchar(i8 -109)
-  ret void
-
-320:                                              ; preds = %164
-  tail call void @putchar(i8 -111)
-  ret void
-
-321:                                              ; preds = %165
-  tail call void @putchar(i8 -113)
-  ret void
-
-322:                                              ; preds = %165
-  tail call void @putchar(i8 -115)
-  ret void
-
-323:                                              ; preds = %166
-  tail call void @putchar(i8 -117)
-  ret void
-
-324:                                              ; preds = %166
-  tail call void @putchar(i8 -119)
-  ret void
-
-325:                                              ; preds = %167
-  tail call void @putchar(i8 -121)
-  ret void
-
-326:                                              ; preds = %167
-  tail call void @putchar(i8 -123)
-  ret void
-
-327:                                              ; preds = %168
-  tail call void @putchar(i8 -125)
-  ret void
-
-328:                                              ; preds = %168
-  tail call void @putchar(i8 -127)
-  ret void
-
-329:                                              ; preds = %169
-  tail call void @putchar(i8 127)
-  ret void
-
-330:                                              ; preds = %169
-  tail call void @putchar(i8 125)
-  ret void
-
-331:                                              ; preds = %170
-  tail call void @putchar(i8 123)
-  ret void
-
-332:                                              ; preds = %170
-  tail call void @putchar(i8 121)
-  ret void
-
-333:                                              ; preds = %171
-  tail call void @putchar(i8 119)
-  ret void
-
-334:                                              ; preds = %171
-  tail call void @putchar(i8 117)
-  ret void
-
-335:                                              ; preds = %172
-  tail call void @putchar(i8 115)
-  ret void
-
-336:                                              ; preds = %172
-  tail call void @putchar(i8 113)
-  ret void
-
-337:                                              ; preds = %173
-  tail call void @putchar(i8 111)
-  ret void
-
-338:                                              ; preds = %173
-  tail call void @putchar(i8 109)
-  ret void
-
-339:                                              ; preds = %174
-  tail call void @putchar(i8 107)
-  ret void
-
-340:                                              ; preds = %174
-  tail call void @putchar(i8 105)
-  ret void
-
-341:                                              ; preds = %175
-  tail call void @putchar(i8 103)
-  ret void
-
-342:                                              ; preds = %175
-  tail call void @putchar(i8 101)
-  ret void
-
-343:                                              ; preds = %176
-  tail call void @putchar(i8 99)
-  ret void
-
-344:                                              ; preds = %176
-  tail call void @putchar(i8 97)
-  ret void
-
-345:                                              ; preds = %177
-  tail call void @putchar(i8 95)
-  ret void
-
-346:                                              ; preds = %177
-  tail call void @putchar(i8 93)
-  ret void
-
-347:                                              ; preds = %178
-  tail call void @putchar(i8 91)
-  ret void
-
-348:                                              ; preds = %178
-  tail call void @putchar(i8 89)
-  ret void
-
-349:                                              ; preds = %179
-  tail call void @putchar(i8 87)
-  ret void
-
-350:                                              ; preds = %179
-  tail call void @putchar(i8 85)
-  ret void
-
-351:                                              ; preds = %180
-  tail call void @putchar(i8 83)
-  ret void
-
-352:                                              ; preds = %180
-  tail call void @putchar(i8 81)
-  ret void
-
-353:                                              ; preds = %181
-  tail call void @putchar(i8 79)
-  ret void
-
-354:                                              ; preds = %181
-  tail call void @putchar(i8 77)
-  ret void
-
-355:                                              ; preds = %182
-  tail call void @putchar(i8 75)
-  ret void
-
-356:                                              ; preds = %182
-  tail call void @putchar(i8 73)
-  ret void
-
-357:                                              ; preds = %183
-  tail call void @putchar(i8 71)
-  ret void
-
-358:                                              ; preds = %183
-  tail call void @putchar(i8 69)
-  ret void
-
-359:                                              ; preds = %184
-  tail call void @putchar(i8 67)
-  ret void
-
-360:                                              ; preds = %184
-  tail call void @putchar(i8 65)
-  ret void
-
-361:                                              ; preds = %185
-  tail call void @putchar(i8 63)
-  ret void
-
-362:                                              ; preds = %185
-  tail call void @putchar(i8 61)
-  ret void
-
-363:                                              ; preds = %186
-  tail call void @putchar(i8 59)
-  ret void
-
-364:                                              ; preds = %186
-  tail call void @putchar(i8 57)
-  ret void
-
-365:                                              ; preds = %187
-  tail call void @putchar(i8 55)
-  ret void
-
-366:                                              ; preds = %187
-  tail call void @putchar(i8 53)
-  ret void
-
-367:                                              ; preds = %188
-  tail call void @putchar(i8 51)
-  ret void
-
-368:                                              ; preds = %188
-  tail call void @putchar(i8 49)
-  ret void
-
-369:                                              ; preds = %189
-  tail call void @putchar(i8 47)
-  ret void
-
-370:                                              ; preds = %189
-  tail call void @putchar(i8 45)
-  ret void
-
-371:                                              ; preds = %190
-  tail call void @putchar(i8 43)
-  ret void
-
-372:                                              ; preds = %190
-  tail call void @putchar(i8 41)
-  ret void
-
-373:                                              ; preds = %191
-  tail call void @putchar(i8 39)
-  ret void
-
-374:                                              ; preds = %191
-  tail call void @putchar(i8 37)
-  ret void
-
-375:                                              ; preds = %192
-  tail call void @putchar(i8 35)
-  ret void
-
-376:                                              ; preds = %192
-  tail call void @putchar(i8 33)
-  ret void
-
-377:                                              ; preds = %193
-  tail call void @putchar(i8 31)
-  ret void
-
-378:                                              ; preds = %193
-  tail call void @putchar(i8 29)
-  ret void
-
-379:                                              ; preds = %194
-  tail call void @putchar(i8 27)
-  ret void
-
-380:                                              ; preds = %194
-  tail call void @putchar(i8 25)
-  ret void
-
-381:                                              ; preds = %195
-  tail call void @putchar(i8 23)
-  ret void
-
-382:                                              ; preds = %195
-  tail call void @putchar(i8 21)
-  ret void
-
-383:                                              ; preds = %196
-  tail call void @putchar(i8 19)
-  ret void
-
-384:                                              ; preds = %196
-  tail call void @putchar(i8 17)
-  ret void
-
-385:                                              ; preds = %197
-  tail call void @putchar(i8 15)
-  ret void
-
-386:                                              ; preds = %197
-  tail call void @putchar(i8 13)
-  ret void
-
-387:                                              ; preds = %198
-  tail call void @putchar(i8 11)
-  ret void
-
-388:                                              ; preds = %198
-  tail call void @putchar(i8 9)
-  ret void
-
-389:                                              ; preds = %199
-  tail call void @putchar(i8 7)
-  ret void
-
-390:                                              ; preds = %199
-  tail call void @putchar(i8 5)
-  ret void
-
-391:                                              ; preds = %200
-  tail call void @putchar(i8 3)
-  ret void
-
-392:                                              ; preds = %200
-  tail call void @putchar(i8 1)
-  ret void
-
-393:                                              ; preds = %201
-  tail call void @putchar(i8 -2)
-  ret void
-
-394:                                              ; preds = %201
-  tail call void @putchar(i8 -4)
-  ret void
-
-395:                                              ; preds = %202
-  tail call void @putchar(i8 -6)
-  ret void
-
-396:                                              ; preds = %202
-  tail call void @putchar(i8 -8)
-  ret void
-
-397:                                              ; preds = %203
-  tail call void @putchar(i8 -10)
-  ret void
-
-398:                                              ; preds = %203
-  tail call void @putchar(i8 -12)
-  ret void
-
-399:                                              ; preds = %204
-  tail call void @putchar(i8 -14)
-  ret void
-
-400:                                              ; preds = %204
-  tail call void @putchar(i8 -16)
-  ret void
-
-401:                                              ; preds = %205
-  tail call void @putchar(i8 -18)
-  ret void
-
-402:                                              ; preds = %205
-  tail call void @putchar(i8 -20)
-  ret void
-
-403:                                              ; preds = %206
-  tail call void @putchar(i8 -22)
-  ret void
-
-404:                                              ; preds = %206
-  tail call void @putchar(i8 -24)
-  ret void
-
-405:                                              ; preds = %207
-  tail call void @putchar(i8 -26)
-  ret void
-
-406:                                              ; preds = %207
-  tail call void @putchar(i8 -28)
-  ret void
-
-407:                                              ; preds = %208
-  tail call void @putchar(i8 -30)
-  ret void
-
-408:                                              ; preds = %208
-  tail call void @putchar(i8 -32)
-  ret void
-
-409:                                              ; preds = %209
-  tail call void @putchar(i8 -34)
-  ret void
-
-410:                                              ; preds = %209
-  tail call void @putchar(i8 -36)
-  ret void
-
-411:                                              ; preds = %210
-  tail call void @putchar(i8 -38)
-  ret void
-
-412:                                              ; preds = %210
-  tail call void @putchar(i8 -40)
-  ret void
-
-413:                                              ; preds = %211
-  tail call void @putchar(i8 -42)
-  ret void
-
-414:                                              ; preds = %211
-  tail call void @putchar(i8 -44)
-  ret void
-
-415:                                              ; preds = %212
-  tail call void @putchar(i8 -46)
-  ret void
-
-416:                                              ; preds = %212
-  tail call void @putchar(i8 -48)
-  ret void
-
-417:                                              ; preds = %213
-  tail call void @putchar(i8 -50)
-  ret void
-
-418:                                              ; preds = %213
-  tail call void @putchar(i8 -52)
-  ret void
-
-419:                                              ; preds = %214
-  tail call void @putchar(i8 -54)
-  ret void
-
-420:                                              ; preds = %214
-  tail call void @putchar(i8 -56)
-  ret void
-
-421:                                              ; preds = %215
-  tail call void @putchar(i8 -58)
-  ret void
-
-422:                                              ; preds = %215
-  tail call void @putchar(i8 -60)
-  ret void
-
-423:                                              ; preds = %216
-  tail call void @putchar(i8 -62)
-  ret void
-
-424:                                              ; preds = %216
-  tail call void @putchar(i8 -64)
-  ret void
-
-425:                                              ; preds = %217
-  tail call void @putchar(i8 -66)
-  ret void
-
-426:                                              ; preds = %217
-  tail call void @putchar(i8 -68)
-  ret void
-
-427:                                              ; preds = %218
-  tail call void @putchar(i8 -70)
-  ret void
-
-428:                                              ; preds = %218
-  tail call void @putchar(i8 -72)
-  ret void
-
-429:                                              ; preds = %219
-  tail call void @putchar(i8 -74)
-  ret void
-
-430:                                              ; preds = %219
-  tail call void @putchar(i8 -76)
-  ret void
-
-431:                                              ; preds = %220
-  tail call void @putchar(i8 -78)
-  ret void
-
-432:                                              ; preds = %220
-  tail call void @putchar(i8 -80)
-  ret void
-
-433:                                              ; preds = %221
-  tail call void @putchar(i8 -82)
-  ret void
-
-434:                                              ; preds = %221
-  tail call void @putchar(i8 -84)
-  ret void
-
-435:                                              ; preds = %222
-  tail call void @putchar(i8 -86)
-  ret void
-
-436:                                              ; preds = %222
-  tail call void @putchar(i8 -88)
-  ret void
-
-437:                                              ; preds = %223
-  tail call void @putchar(i8 -90)
-  ret void
-
-438:                                              ; preds = %223
-  tail call void @putchar(i8 -92)
-  ret void
-
-439:                                              ; preds = %224
-  tail call void @putchar(i8 -94)
-  ret void
-
-440:                                              ; preds = %224
-  tail call void @putchar(i8 -96)
-  ret void
-
-441:                                              ; preds = %225
-  tail call void @putchar(i8 -98)
-  ret void
-
-442:                                              ; preds = %225
-  tail call void @putchar(i8 -100)
-  ret void
-
-443:                                              ; preds = %226
-  tail call void @putchar(i8 -102)
-  ret void
-
-444:                                              ; preds = %226
-  tail call void @putchar(i8 -104)
-  ret void
-
-445:                                              ; preds = %227
-  tail call void @putchar(i8 -106)
-  ret void
-
-446:                                              ; preds = %227
-  tail call void @putchar(i8 -108)
-  ret void
-
-447:                                              ; preds = %228
-  tail call void @putchar(i8 -110)
-  ret void
-
-448:                                              ; preds = %228
-  tail call void @putchar(i8 -112)
-  ret void
-
-449:                                              ; preds = %229
-  tail call void @putchar(i8 -114)
-  ret void
-
-450:                                              ; preds = %229
-  tail call void @putchar(i8 -116)
-  ret void
-
-451:                                              ; preds = %230
-  tail call void @putchar(i8 -118)
-  ret void
-
-452:                                              ; preds = %230
-  tail call void @putchar(i8 -120)
-  ret void
-
-453:                                              ; preds = %231
-  tail call void @putchar(i8 -122)
-  ret void
-
-454:                                              ; preds = %231
-  tail call void @putchar(i8 -124)
-  ret void
-
-455:                                              ; preds = %232
-  tail call void @putchar(i8 -126)
-  ret void
-
-456:                                              ; preds = %232
-  tail call void @putchar(i8 -128)
-  ret void
-
-457:                                              ; preds = %233
-  tail call void @putchar(i8 126)
-  ret void
-
-458:                                              ; preds = %233
-  tail call void @putchar(i8 124)
-  ret void
-
-459:                                              ; preds = %234
-  tail call void @putchar(i8 122)
-  ret void
-
-460:                                              ; preds = %234
-  tail call void @putchar(i8 120)
-  ret void
-
-461:                                              ; preds = %235
-  tail call void @putchar(i8 118)
-  ret void
-
-462:                                              ; preds = %235
-  tail call void @putchar(i8 116)
-  ret void
-
-463:                                              ; preds = %236
-  tail call void @putchar(i8 114)
-  ret void
-
-464:                                              ; preds = %236
-  tail call void @putchar(i8 112)
-  ret void
-
-465:                                              ; preds = %237
-  tail call void @putchar(i8 110)
-  ret void
-
-466:                                              ; preds = %237
-  tail call void @putchar(i8 108)
-  ret void
-
-467:                                              ; preds = %238
-  tail call void @putchar(i8 106)
-  ret void
-
-468:                                              ; preds = %238
-  tail call void @putchar(i8 104)
-  ret void
-
-469:                                              ; preds = %239
-  tail call void @putchar(i8 102)
-  ret void
-
-470:                                              ; preds = %239
-  tail call void @putchar(i8 100)
-  ret void
-
-471:                                              ; preds = %240
-  tail call void @putchar(i8 98)
-  ret void
-
-472:                                              ; preds = %240
-  tail call void @putchar(i8 96)
-  ret void
-
-473:                                              ; preds = %241
-  tail call void @putchar(i8 94)
-  ret void
-
-474:                                              ; preds = %241
-  tail call void @putchar(i8 92)
-  ret void
-
-475:                                              ; preds = %242
-  tail call void @putchar(i8 90)
-  ret void
-
-476:                                              ; preds = %242
-  tail call void @putchar(i8 88)
-  ret void
-
-477:                                              ; preds = %243
-  tail call void @putchar(i8 86)
-  ret void
-
-478:                                              ; preds = %243
-  tail call void @putchar(i8 84)
-  ret void
-
-479:                                              ; preds = %244
-  tail call void @putchar(i8 82)
-  ret void
-
-480:                                              ; preds = %244
-  tail call void @putchar(i8 80)
-  ret void
-
-481:                                              ; preds = %245
-  tail call void @putchar(i8 78)
-  ret void
-
-482:                                              ; preds = %245
-  tail call void @putchar(i8 76)
-  ret void
-
-483:                                              ; preds = %246
-  tail call void @putchar(i8 74)
-  ret void
-
-484:                                              ; preds = %246
-  tail call void @putchar(i8 72)
-  ret void
-
-485:                                              ; preds = %247
-  tail call void @putchar(i8 70)
-  ret void
-
-486:                                              ; preds = %247
-  tail call void @putchar(i8 68)
-  ret void
-
-487:                                              ; preds = %248
-  tail call void @putchar(i8 66)
-  ret void
-
-488:                                              ; preds = %248
-  tail call void @putchar(i8 64)
-  ret void
-
-489:                                              ; preds = %249
-  tail call void @putchar(i8 62)
-  ret void
-
-490:                                              ; preds = %249
-  tail call void @putchar(i8 60)
-  ret void
-
-491:                                              ; preds = %250
-  tail call void @putchar(i8 58)
-  ret void
-
-492:                                              ; preds = %250
-  tail call void @putchar(i8 56)
-  ret void
-
-493:                                              ; preds = %251
-  tail call void @putchar(i8 54)
-  ret void
-
-494:                                              ; preds = %251
-  tail call void @putchar(i8 52)
-  ret void
-
-495:                                              ; preds = %252
-  tail call void @putchar(i8 50)
-  ret void
-
-496:                                              ; preds = %252
-  tail call void @putchar(i8 48)
-  ret void
-
-497:                                              ; preds = %253
-  tail call void @putchar(i8 46)
-  ret void
-
-498:                                              ; preds = %253
-  tail call void @putchar(i8 44)
-  ret void
-
-499:                                              ; preds = %254
-  tail call void @putchar(i8 42)
-  ret void
-
-500:                                              ; preds = %254
-  tail call void @putchar(i8 40)
-  ret void
-
-501:                                              ; preds = %255
-  tail call void @putchar(i8 38)
-  ret void
-
-502:                                              ; preds = %255
-  tail call void @putchar(i8 36)
-  ret void
-
-503:                                              ; preds = %256
-  tail call void @putchar(i8 34)
-  ret void
-
-504:                                              ; preds = %256
-  tail call void @putchar(i8 32)
-  ret void
-
-505:                                              ; preds = %257
-  tail call void @putchar(i8 30)
-  ret void
-
-506:                                              ; preds = %257
-  tail call void @putchar(i8 28)
-  ret void
-
-507:                                              ; preds = %258
-  tail call void @putchar(i8 26)
-  ret void
-
-508:                                              ; preds = %258
-  tail call void @putchar(i8 24)
-  ret void
-
-509:                                              ; preds = %259
-  tail call void @putchar(i8 22)
-  ret void
-
-510:                                              ; preds = %259
-  tail call void @putchar(i8 20)
-  ret void
-
-511:                                              ; preds = %260
-  tail call void @putchar(i8 18)
-  ret void
-
-512:                                              ; preds = %260
-  tail call void @putchar(i8 16)
-  ret void
-
-513:                                              ; preds = %261
-  tail call void @putchar(i8 14)
-  ret void
-
-514:                                              ; preds = %261
-  tail call void @putchar(i8 12)
-  ret void
-
-515:                                              ; preds = %262
-  tail call void @putchar(i8 10)
-  ret void
-
-516:                                              ; preds = %262
-  tail call void @putchar(i8 8)
-  ret void
-
-517:                                              ; preds = %263
-  tail call void @putchar(i8 6)
-  ret void
-
-518:                                              ; preds = %263
-  tail call void @putchar(i8 4)
-  ret void
-
-519:                                              ; preds = %264
-  tail call void @putchar(i8 2)
-  ret void
-
-520:                                              ; preds = %264
-  tail call void @putchar(i8 0)
-  ret void
-}
-
 define void @main() local_unnamed_addr {
   %1 = tail call i8 @getchar()
   %2 = icmp sgt i8 %1, -1
@@ -1871,60 +13,854 @@ define void @main() local_unnamed_addr {
   %4 = icmp eq i8 %3, 0
   %5 = and i8 %1, 32
   %6 = icmp eq i8 %5, 0
-  br i1 %2, label %12, label %7
+  %7 = and i8 %1, 16
+  %8 = icmp eq i8 %7, 0
+  br i1 %2, label %231, label %9
 
-7:                                                ; preds = %0
-  br i1 %4, label %10, label %8
+9:                                                ; preds = %0
+  br i1 %4, label %122, label %codeRepl.i
 
-8:                                                ; preds = %7
-  br i1 %6, label %9, label %codeRepl.i.i
+codeRepl.i:                                       ; preds = %9
+  br i1 %6, label %67, label %10
 
-codeRepl.i.i:                                     ; preds = %8
-  tail call fastcc void @__elem_2(i1 true, i8 %1, i1 true, i1 true)
-  br label %__elem_0.exit
+10:                                               ; preds = %codeRepl.i
+  br i1 %8, label %39, label %codeRepl.i.i
 
-9:                                                ; preds = %8
-  tail call fastcc void @__elem_2(i1 false, i8 %1, i1 true, i1 true)
-  br label %__elem_0.exit
+codeRepl.i.i:                                     ; preds = %10
+  %11 = and i8 %1, 8
+  %12 = icmp eq i8 %11, 0
+  %13 = and i8 %1, 4
+  %14 = icmp eq i8 %13, 0
+  %15 = and i8 %1, 2
+  %16 = icmp eq i8 %15, 0
+  %17 = and i8 %1, 1
+  %18 = trunc i8 %17 to i3
+  %19 = icmp eq i8 %17, 0
+  %..i7.i = select i1 %19, i3 2, i3 3
+  %.sink.i8.i = select i1 %16, i3 %18, i3 %..i7.i
+  br i1 %12, label %27, label %20
 
-10:                                               ; preds = %7
-  br i1 %6, label %11, label %codeRepl.i1.i
+20:                                               ; preds = %codeRepl.i.i
+  %21 = zext i3 %.sink.i8.i to i4
+  br i1 %14, label %24, label %codeRepl.i.i12
 
-codeRepl.i1.i:                                    ; preds = %10
-  tail call fastcc void @__elem_2(i1 true, i8 %1, i1 true, i1 false)
-  br label %__elem_0.exit
+codeRepl.i.i12:                                   ; preds = %20
+  %22 = or i4 %21, -4
+  %23 = zext i4 %22 to i5
+  br label %__elem_3.exit
 
-11:                                               ; preds = %10
-  tail call fastcc void @__elem_2(i1 false, i8 %1, i1 true, i1 false)
-  br label %__elem_0.exit
+24:                                               ; preds = %20
+  %25 = or i4 %21, -8
+  %26 = zext i4 %25 to i5
+  br label %__elem_3.exit
 
-__elem_0.exit:                                    ; preds = %codeRepl.i1.i3, %16, %codeRepl.i.i1, %14, %codeRepl.i1.i, %11, %codeRepl.i.i, %9
+27:                                               ; preds = %codeRepl.i.i
+  br i1 %14, label %30, label %codeRepl.i1.i13
+
+codeRepl.i1.i13:                                  ; preds = %27
+  %28 = or i3 %.sink.i8.i, -4
+  %29 = zext i3 %28 to i5
+  br label %__elem_3.exit
+
+30:                                               ; preds = %27
+  %31 = zext i3 %.sink.i8.i to i5
+  br label %__elem_3.exit
+
+__elem_3.exit:                                    ; preds = %codeRepl.i.i12, %24, %codeRepl.i1.i13, %30
+  %.sink17.i = phi i5 [ %29, %codeRepl.i1.i13 ], [ %31, %30 ], [ %26, %24 ], [ %23, %codeRepl.i.i12 ]
+  %32 = or i5 %.sink17.i, -16
+  %33 = zext i5 %32 to i6
+  %34 = or i6 -32, %33
+  %35 = zext i6 %34 to i7
+  %36 = or i7 -64, %35
+  %37 = zext i7 %36 to i8
+  %38 = or i8 -128, %37
+  tail call void @putchar(i8 %38)
+  br label %__elem_0.4.exit
+
+39:                                               ; preds = %10
+  %40 = and i8 %1, 8
+  %41 = icmp eq i8 %40, 0
+  %42 = and i8 %1, 4
+  %43 = icmp eq i8 %42, 0
+  %44 = and i8 %1, 2
+  %45 = icmp eq i8 %44, 0
+  %46 = and i8 %1, 1
+  %47 = trunc i8 %46 to i3
+  %48 = icmp eq i8 %46, 0
+  %..i7.i14 = select i1 %48, i3 2, i3 3
+  %.sink.i8.i15 = select i1 %45, i3 %47, i3 %..i7.i14
+  br i1 %41, label %56, label %49
+
+49:                                               ; preds = %39
+  %50 = zext i3 %.sink.i8.i15 to i4
+  br i1 %43, label %53, label %codeRepl.i.i16
+
+codeRepl.i.i16:                                   ; preds = %49
+  %51 = or i4 %50, -4
+  %52 = zext i4 %51 to i5
+  br label %__elem_3.exit19
+
+53:                                               ; preds = %49
+  %54 = or i4 %50, -8
+  %55 = zext i4 %54 to i5
+  br label %__elem_3.exit19
+
+56:                                               ; preds = %39
+  br i1 %43, label %59, label %codeRepl.i1.i18
+
+codeRepl.i1.i18:                                  ; preds = %56
+  %57 = or i3 %.sink.i8.i15, -4
+  %58 = zext i3 %57 to i5
+  br label %__elem_3.exit19
+
+59:                                               ; preds = %56
+  %60 = zext i3 %.sink.i8.i15 to i5
+  br label %__elem_3.exit19
+
+__elem_3.exit19:                                  ; preds = %codeRepl.i.i16, %53, %codeRepl.i1.i18, %59
+  %.sink17.i17 = phi i5 [ %58, %codeRepl.i1.i18 ], [ %60, %59 ], [ %55, %53 ], [ %52, %codeRepl.i.i16 ]
+  %61 = zext i5 %.sink17.i17 to i6
+  %62 = or i6 -32, %61
+  %63 = zext i6 %62 to i7
+  %64 = or i7 -64, %63
+  %65 = zext i7 %64 to i8
+  %66 = or i8 -128, %65
+  tail call void @putchar(i8 %66)
+  br label %__elem_0.4.exit
+
+67:                                               ; preds = %codeRepl.i
+  br i1 %8, label %95, label %codeRepl.i1.i
+
+codeRepl.i1.i:                                    ; preds = %67
+  %68 = and i8 %1, 8
+  %69 = icmp eq i8 %68, 0
+  %70 = and i8 %1, 4
+  %71 = icmp eq i8 %70, 0
+  %72 = and i8 %1, 2
+  %73 = icmp eq i8 %72, 0
+  %74 = and i8 %1, 1
+  %75 = trunc i8 %74 to i3
+  %76 = icmp eq i8 %74, 0
+  %..i7.i20 = select i1 %76, i3 2, i3 3
+  %.sink.i8.i21 = select i1 %73, i3 %75, i3 %..i7.i20
+  br i1 %69, label %84, label %77
+
+77:                                               ; preds = %codeRepl.i1.i
+  %78 = zext i3 %.sink.i8.i21 to i4
+  br i1 %71, label %81, label %codeRepl.i.i22
+
+codeRepl.i.i22:                                   ; preds = %77
+  %79 = or i4 %78, -4
+  %80 = zext i4 %79 to i5
+  br label %__elem_3.exit25
+
+81:                                               ; preds = %77
+  %82 = or i4 %78, -8
+  %83 = zext i4 %82 to i5
+  br label %__elem_3.exit25
+
+84:                                               ; preds = %codeRepl.i1.i
+  br i1 %71, label %87, label %codeRepl.i1.i24
+
+codeRepl.i1.i24:                                  ; preds = %84
+  %85 = or i3 %.sink.i8.i21, -4
+  %86 = zext i3 %85 to i5
+  br label %__elem_3.exit25
+
+87:                                               ; preds = %84
+  %88 = zext i3 %.sink.i8.i21 to i5
+  br label %__elem_3.exit25
+
+__elem_3.exit25:                                  ; preds = %codeRepl.i.i22, %81, %codeRepl.i1.i24, %87
+  %.sink17.i23 = phi i5 [ %86, %codeRepl.i1.i24 ], [ %88, %87 ], [ %83, %81 ], [ %80, %codeRepl.i.i22 ]
+  %89 = or i5 %.sink17.i23, -16
+  %90 = zext i5 %89 to i6
+  %91 = zext i6 %90 to i7
+  %92 = or i7 -64, %91
+  %93 = zext i7 %92 to i8
+  %94 = or i8 -128, %93
+  tail call void @putchar(i8 %94)
+  br label %__elem_0.4.exit
+
+95:                                               ; preds = %67
+  %96 = and i8 %1, 8
+  %97 = icmp eq i8 %96, 0
+  %98 = and i8 %1, 4
+  %99 = icmp eq i8 %98, 0
+  %100 = and i8 %1, 2
+  %101 = icmp eq i8 %100, 0
+  %102 = and i8 %1, 1
+  %103 = trunc i8 %102 to i3
+  %104 = icmp eq i8 %102, 0
+  %..i7.i26 = select i1 %104, i3 2, i3 3
+  %.sink.i8.i27 = select i1 %101, i3 %103, i3 %..i7.i26
+  br i1 %97, label %112, label %105
+
+105:                                              ; preds = %95
+  %106 = zext i3 %.sink.i8.i27 to i4
+  br i1 %99, label %109, label %codeRepl.i.i28
+
+codeRepl.i.i28:                                   ; preds = %105
+  %107 = or i4 %106, -4
+  %108 = zext i4 %107 to i5
+  br label %__elem_3.exit31
+
+109:                                              ; preds = %105
+  %110 = or i4 %106, -8
+  %111 = zext i4 %110 to i5
+  br label %__elem_3.exit31
+
+112:                                              ; preds = %95
+  br i1 %99, label %115, label %codeRepl.i1.i30
+
+codeRepl.i1.i30:                                  ; preds = %112
+  %113 = or i3 %.sink.i8.i27, -4
+  %114 = zext i3 %113 to i5
+  br label %__elem_3.exit31
+
+115:                                              ; preds = %112
+  %116 = zext i3 %.sink.i8.i27 to i5
+  br label %__elem_3.exit31
+
+__elem_3.exit31:                                  ; preds = %codeRepl.i.i28, %109, %codeRepl.i1.i30, %115
+  %.sink17.i29 = phi i5 [ %114, %codeRepl.i1.i30 ], [ %116, %115 ], [ %111, %109 ], [ %108, %codeRepl.i.i28 ]
+  %117 = zext i5 %.sink17.i29 to i6
+  %118 = zext i6 %117 to i7
+  %119 = or i7 -64, %118
+  %120 = zext i7 %119 to i8
+  %121 = or i8 -128, %120
+  tail call void @putchar(i8 %121)
+  br label %__elem_0.4.exit
+
+122:                                              ; preds = %9
+  br i1 %6, label %178, label %123
+
+123:                                              ; preds = %122
+  br i1 %8, label %151, label %codeRepl.i.i3
+
+codeRepl.i.i3:                                    ; preds = %123
+  %124 = and i8 %1, 8
+  %125 = icmp eq i8 %124, 0
+  %126 = and i8 %1, 4
+  %127 = icmp eq i8 %126, 0
+  %128 = and i8 %1, 2
+  %129 = icmp eq i8 %128, 0
+  %130 = and i8 %1, 1
+  %131 = trunc i8 %130 to i3
+  %132 = icmp eq i8 %130, 0
+  %..i7.i32 = select i1 %132, i3 2, i3 3
+  %.sink.i8.i33 = select i1 %129, i3 %131, i3 %..i7.i32
+  br i1 %125, label %140, label %133
+
+133:                                              ; preds = %codeRepl.i.i3
+  %134 = zext i3 %.sink.i8.i33 to i4
+  br i1 %127, label %137, label %codeRepl.i.i34
+
+codeRepl.i.i34:                                   ; preds = %133
+  %135 = or i4 %134, -4
+  %136 = zext i4 %135 to i5
+  br label %__elem_3.exit37
+
+137:                                              ; preds = %133
+  %138 = or i4 %134, -8
+  %139 = zext i4 %138 to i5
+  br label %__elem_3.exit37
+
+140:                                              ; preds = %codeRepl.i.i3
+  br i1 %127, label %143, label %codeRepl.i1.i36
+
+codeRepl.i1.i36:                                  ; preds = %140
+  %141 = or i3 %.sink.i8.i33, -4
+  %142 = zext i3 %141 to i5
+  br label %__elem_3.exit37
+
+143:                                              ; preds = %140
+  %144 = zext i3 %.sink.i8.i33 to i5
+  br label %__elem_3.exit37
+
+__elem_3.exit37:                                  ; preds = %codeRepl.i.i34, %137, %codeRepl.i1.i36, %143
+  %.sink17.i35 = phi i5 [ %142, %codeRepl.i1.i36 ], [ %144, %143 ], [ %139, %137 ], [ %136, %codeRepl.i.i34 ]
+  %145 = or i5 %.sink17.i35, -16
+  %146 = zext i5 %145 to i6
+  %147 = or i6 -32, %146
+  %148 = zext i6 %147 to i7
+  %149 = zext i7 %148 to i8
+  %150 = or i8 -128, %149
+  tail call void @putchar(i8 %150)
+  br label %__elem_0.4.exit
+
+151:                                              ; preds = %123
+  %152 = and i8 %1, 8
+  %153 = icmp eq i8 %152, 0
+  %154 = and i8 %1, 4
+  %155 = icmp eq i8 %154, 0
+  %156 = and i8 %1, 2
+  %157 = icmp eq i8 %156, 0
+  %158 = and i8 %1, 1
+  %159 = trunc i8 %158 to i3
+  %160 = icmp eq i8 %158, 0
+  %..i7.i38 = select i1 %160, i3 2, i3 3
+  %.sink.i8.i39 = select i1 %157, i3 %159, i3 %..i7.i38
+  br i1 %153, label %168, label %161
+
+161:                                              ; preds = %151
+  %162 = zext i3 %.sink.i8.i39 to i4
+  br i1 %155, label %165, label %codeRepl.i.i40
+
+codeRepl.i.i40:                                   ; preds = %161
+  %163 = or i4 %162, -4
+  %164 = zext i4 %163 to i5
+  br label %__elem_3.exit43
+
+165:                                              ; preds = %161
+  %166 = or i4 %162, -8
+  %167 = zext i4 %166 to i5
+  br label %__elem_3.exit43
+
+168:                                              ; preds = %151
+  br i1 %155, label %171, label %codeRepl.i1.i42
+
+codeRepl.i1.i42:                                  ; preds = %168
+  %169 = or i3 %.sink.i8.i39, -4
+  %170 = zext i3 %169 to i5
+  br label %__elem_3.exit43
+
+171:                                              ; preds = %168
+  %172 = zext i3 %.sink.i8.i39 to i5
+  br label %__elem_3.exit43
+
+__elem_3.exit43:                                  ; preds = %codeRepl.i.i40, %165, %codeRepl.i1.i42, %171
+  %.sink17.i41 = phi i5 [ %170, %codeRepl.i1.i42 ], [ %172, %171 ], [ %167, %165 ], [ %164, %codeRepl.i.i40 ]
+  %173 = zext i5 %.sink17.i41 to i6
+  %174 = or i6 -32, %173
+  %175 = zext i6 %174 to i7
+  %176 = zext i7 %175 to i8
+  %177 = or i8 -128, %176
+  tail call void @putchar(i8 %177)
+  br label %__elem_0.4.exit
+
+178:                                              ; preds = %122
+  br i1 %8, label %205, label %codeRepl.i1.i4
+
+codeRepl.i1.i4:                                   ; preds = %178
+  %179 = and i8 %1, 8
+  %180 = icmp eq i8 %179, 0
+  %181 = and i8 %1, 4
+  %182 = icmp eq i8 %181, 0
+  %183 = and i8 %1, 2
+  %184 = icmp eq i8 %183, 0
+  %185 = and i8 %1, 1
+  %186 = trunc i8 %185 to i3
+  %187 = icmp eq i8 %185, 0
+  %..i7.i44 = select i1 %187, i3 2, i3 3
+  %.sink.i8.i45 = select i1 %184, i3 %186, i3 %..i7.i44
+  br i1 %180, label %195, label %188
+
+188:                                              ; preds = %codeRepl.i1.i4
+  %189 = zext i3 %.sink.i8.i45 to i4
+  br i1 %182, label %192, label %codeRepl.i.i46
+
+codeRepl.i.i46:                                   ; preds = %188
+  %190 = or i4 %189, -4
+  %191 = zext i4 %190 to i5
+  br label %__elem_3.exit49
+
+192:                                              ; preds = %188
+  %193 = or i4 %189, -8
+  %194 = zext i4 %193 to i5
+  br label %__elem_3.exit49
+
+195:                                              ; preds = %codeRepl.i1.i4
+  br i1 %182, label %198, label %codeRepl.i1.i48
+
+codeRepl.i1.i48:                                  ; preds = %195
+  %196 = or i3 %.sink.i8.i45, -4
+  %197 = zext i3 %196 to i5
+  br label %__elem_3.exit49
+
+198:                                              ; preds = %195
+  %199 = zext i3 %.sink.i8.i45 to i5
+  br label %__elem_3.exit49
+
+__elem_3.exit49:                                  ; preds = %codeRepl.i.i46, %192, %codeRepl.i1.i48, %198
+  %.sink17.i47 = phi i5 [ %197, %codeRepl.i1.i48 ], [ %199, %198 ], [ %194, %192 ], [ %191, %codeRepl.i.i46 ]
+  %200 = or i5 %.sink17.i47, -16
+  %201 = zext i5 %200 to i6
+  %202 = zext i6 %201 to i7
+  %203 = zext i7 %202 to i8
+  %204 = or i8 -128, %203
+  tail call void @putchar(i8 %204)
+  br label %__elem_0.4.exit
+
+205:                                              ; preds = %178
+  %206 = and i8 %1, 8
+  %207 = icmp eq i8 %206, 0
+  %208 = and i8 %1, 4
+  %209 = icmp eq i8 %208, 0
+  %210 = and i8 %1, 2
+  %211 = icmp eq i8 %210, 0
+  %212 = and i8 %1, 1
+  %213 = trunc i8 %212 to i3
+  %214 = icmp eq i8 %212, 0
+  %..i7.i50 = select i1 %214, i3 2, i3 3
+  %.sink.i8.i51 = select i1 %211, i3 %213, i3 %..i7.i50
+  br i1 %207, label %222, label %215
+
+215:                                              ; preds = %205
+  %216 = zext i3 %.sink.i8.i51 to i4
+  br i1 %209, label %219, label %codeRepl.i.i52
+
+codeRepl.i.i52:                                   ; preds = %215
+  %217 = or i4 %216, -4
+  %218 = zext i4 %217 to i5
+  br label %__elem_3.exit55
+
+219:                                              ; preds = %215
+  %220 = or i4 %216, -8
+  %221 = zext i4 %220 to i5
+  br label %__elem_3.exit55
+
+222:                                              ; preds = %205
+  br i1 %209, label %225, label %codeRepl.i1.i54
+
+codeRepl.i1.i54:                                  ; preds = %222
+  %223 = or i3 %.sink.i8.i51, -4
+  %224 = zext i3 %223 to i5
+  br label %__elem_3.exit55
+
+225:                                              ; preds = %222
+  %226 = zext i3 %.sink.i8.i51 to i5
+  br label %__elem_3.exit55
+
+__elem_3.exit55:                                  ; preds = %codeRepl.i.i52, %219, %codeRepl.i1.i54, %225
+  %.sink17.i53 = phi i5 [ %224, %codeRepl.i1.i54 ], [ %226, %225 ], [ %221, %219 ], [ %218, %codeRepl.i.i52 ]
+  %227 = zext i5 %.sink17.i53 to i6
+  %228 = zext i6 %227 to i7
+  %229 = zext i7 %228 to i8
+  %230 = or i8 -128, %229
+  tail call void @putchar(i8 %230)
+  br label %__elem_0.4.exit
+
+__elem_0.4.exit:                                  ; preds = %__elem_3.exit103, %__elem_3.exit97, %__elem_3.exit91, %__elem_3.exit85, %__elem_3.exit79, %__elem_3.exit73, %__elem_3.exit67, %__elem_3.exit61, %__elem_3.exit55, %__elem_3.exit49, %__elem_3.exit43, %__elem_3.exit37, %__elem_3.exit31, %__elem_3.exit25, %__elem_3.exit19, %__elem_3.exit
   ret void
 
-12:                                               ; preds = %0
-  br i1 %4, label %15, label %13
+231:                                              ; preds = %0
+  br i1 %4, label %340, label %codeRepl.i1
 
-13:                                               ; preds = %12
-  br i1 %6, label %14, label %codeRepl.i.i1
+codeRepl.i1:                                      ; preds = %231
+  br i1 %6, label %287, label %232
 
-codeRepl.i.i1:                                    ; preds = %13
-  tail call fastcc void @__elem_2(i1 true, i8 %1, i1 false, i1 true)
-  br label %__elem_0.exit
+232:                                              ; preds = %codeRepl.i1
+  br i1 %8, label %260, label %codeRepl.i.i6
 
-14:                                               ; preds = %13
-  tail call fastcc void @__elem_2(i1 false, i8 %1, i1 false, i1 true)
-  br label %__elem_0.exit
+codeRepl.i.i6:                                    ; preds = %232
+  %233 = and i8 %1, 8
+  %234 = icmp eq i8 %233, 0
+  %235 = and i8 %1, 4
+  %236 = icmp eq i8 %235, 0
+  %237 = and i8 %1, 2
+  %238 = icmp eq i8 %237, 0
+  %239 = and i8 %1, 1
+  %240 = trunc i8 %239 to i3
+  %241 = icmp eq i8 %239, 0
+  %..i7.i56 = select i1 %241, i3 2, i3 3
+  %.sink.i8.i57 = select i1 %238, i3 %240, i3 %..i7.i56
+  br i1 %234, label %249, label %242
 
-15:                                               ; preds = %12
-  br i1 %6, label %16, label %codeRepl.i1.i3
+242:                                              ; preds = %codeRepl.i.i6
+  %243 = zext i3 %.sink.i8.i57 to i4
+  br i1 %236, label %246, label %codeRepl.i.i58
 
-codeRepl.i1.i3:                                   ; preds = %15
-  tail call fastcc void @__elem_2(i1 true, i8 %1, i1 false, i1 false)
-  br label %__elem_0.exit
+codeRepl.i.i58:                                   ; preds = %242
+  %244 = or i4 %243, -4
+  %245 = zext i4 %244 to i5
+  br label %__elem_3.exit61
 
-16:                                               ; preds = %15
-  tail call fastcc void @__elem_2(i1 false, i8 %1, i1 false, i1 false)
-  br label %__elem_0.exit
+246:                                              ; preds = %242
+  %247 = or i4 %243, -8
+  %248 = zext i4 %247 to i5
+  br label %__elem_3.exit61
+
+249:                                              ; preds = %codeRepl.i.i6
+  br i1 %236, label %252, label %codeRepl.i1.i60
+
+codeRepl.i1.i60:                                  ; preds = %249
+  %250 = or i3 %.sink.i8.i57, -4
+  %251 = zext i3 %250 to i5
+  br label %__elem_3.exit61
+
+252:                                              ; preds = %249
+  %253 = zext i3 %.sink.i8.i57 to i5
+  br label %__elem_3.exit61
+
+__elem_3.exit61:                                  ; preds = %codeRepl.i.i58, %246, %codeRepl.i1.i60, %252
+  %.sink17.i59 = phi i5 [ %251, %codeRepl.i1.i60 ], [ %253, %252 ], [ %248, %246 ], [ %245, %codeRepl.i.i58 ]
+  %254 = or i5 %.sink17.i59, -16
+  %255 = zext i5 %254 to i6
+  %256 = or i6 -32, %255
+  %257 = zext i6 %256 to i7
+  %258 = or i7 -64, %257
+  %259 = zext i7 %258 to i8
+  tail call void @putchar(i8 %259)
+  br label %__elem_0.4.exit
+
+260:                                              ; preds = %232
+  %261 = and i8 %1, 8
+  %262 = icmp eq i8 %261, 0
+  %263 = and i8 %1, 4
+  %264 = icmp eq i8 %263, 0
+  %265 = and i8 %1, 2
+  %266 = icmp eq i8 %265, 0
+  %267 = and i8 %1, 1
+  %268 = trunc i8 %267 to i3
+  %269 = icmp eq i8 %267, 0
+  %..i7.i62 = select i1 %269, i3 2, i3 3
+  %.sink.i8.i63 = select i1 %266, i3 %268, i3 %..i7.i62
+  br i1 %262, label %277, label %270
+
+270:                                              ; preds = %260
+  %271 = zext i3 %.sink.i8.i63 to i4
+  br i1 %264, label %274, label %codeRepl.i.i64
+
+codeRepl.i.i64:                                   ; preds = %270
+  %272 = or i4 %271, -4
+  %273 = zext i4 %272 to i5
+  br label %__elem_3.exit67
+
+274:                                              ; preds = %270
+  %275 = or i4 %271, -8
+  %276 = zext i4 %275 to i5
+  br label %__elem_3.exit67
+
+277:                                              ; preds = %260
+  br i1 %264, label %280, label %codeRepl.i1.i66
+
+codeRepl.i1.i66:                                  ; preds = %277
+  %278 = or i3 %.sink.i8.i63, -4
+  %279 = zext i3 %278 to i5
+  br label %__elem_3.exit67
+
+280:                                              ; preds = %277
+  %281 = zext i3 %.sink.i8.i63 to i5
+  br label %__elem_3.exit67
+
+__elem_3.exit67:                                  ; preds = %codeRepl.i.i64, %274, %codeRepl.i1.i66, %280
+  %.sink17.i65 = phi i5 [ %279, %codeRepl.i1.i66 ], [ %281, %280 ], [ %276, %274 ], [ %273, %codeRepl.i.i64 ]
+  %282 = zext i5 %.sink17.i65 to i6
+  %283 = or i6 -32, %282
+  %284 = zext i6 %283 to i7
+  %285 = or i7 -64, %284
+  %286 = zext i7 %285 to i8
+  tail call void @putchar(i8 %286)
+  br label %__elem_0.4.exit
+
+287:                                              ; preds = %codeRepl.i1
+  br i1 %8, label %314, label %codeRepl.i1.i7
+
+codeRepl.i1.i7:                                   ; preds = %287
+  %288 = and i8 %1, 8
+  %289 = icmp eq i8 %288, 0
+  %290 = and i8 %1, 4
+  %291 = icmp eq i8 %290, 0
+  %292 = and i8 %1, 2
+  %293 = icmp eq i8 %292, 0
+  %294 = and i8 %1, 1
+  %295 = trunc i8 %294 to i3
+  %296 = icmp eq i8 %294, 0
+  %..i7.i68 = select i1 %296, i3 2, i3 3
+  %.sink.i8.i69 = select i1 %293, i3 %295, i3 %..i7.i68
+  br i1 %289, label %304, label %297
+
+297:                                              ; preds = %codeRepl.i1.i7
+  %298 = zext i3 %.sink.i8.i69 to i4
+  br i1 %291, label %301, label %codeRepl.i.i70
+
+codeRepl.i.i70:                                   ; preds = %297
+  %299 = or i4 %298, -4
+  %300 = zext i4 %299 to i5
+  br label %__elem_3.exit73
+
+301:                                              ; preds = %297
+  %302 = or i4 %298, -8
+  %303 = zext i4 %302 to i5
+  br label %__elem_3.exit73
+
+304:                                              ; preds = %codeRepl.i1.i7
+  br i1 %291, label %307, label %codeRepl.i1.i72
+
+codeRepl.i1.i72:                                  ; preds = %304
+  %305 = or i3 %.sink.i8.i69, -4
+  %306 = zext i3 %305 to i5
+  br label %__elem_3.exit73
+
+307:                                              ; preds = %304
+  %308 = zext i3 %.sink.i8.i69 to i5
+  br label %__elem_3.exit73
+
+__elem_3.exit73:                                  ; preds = %codeRepl.i.i70, %301, %codeRepl.i1.i72, %307
+  %.sink17.i71 = phi i5 [ %306, %codeRepl.i1.i72 ], [ %308, %307 ], [ %303, %301 ], [ %300, %codeRepl.i.i70 ]
+  %309 = or i5 %.sink17.i71, -16
+  %310 = zext i5 %309 to i6
+  %311 = zext i6 %310 to i7
+  %312 = or i7 -64, %311
+  %313 = zext i7 %312 to i8
+  tail call void @putchar(i8 %313)
+  br label %__elem_0.4.exit
+
+314:                                              ; preds = %287
+  %315 = and i8 %1, 8
+  %316 = icmp eq i8 %315, 0
+  %317 = and i8 %1, 4
+  %318 = icmp eq i8 %317, 0
+  %319 = and i8 %1, 2
+  %320 = icmp eq i8 %319, 0
+  %321 = and i8 %1, 1
+  %322 = trunc i8 %321 to i3
+  %323 = icmp eq i8 %321, 0
+  %..i7.i74 = select i1 %323, i3 2, i3 3
+  %.sink.i8.i75 = select i1 %320, i3 %322, i3 %..i7.i74
+  br i1 %316, label %331, label %324
+
+324:                                              ; preds = %314
+  %325 = zext i3 %.sink.i8.i75 to i4
+  br i1 %318, label %328, label %codeRepl.i.i76
+
+codeRepl.i.i76:                                   ; preds = %324
+  %326 = or i4 %325, -4
+  %327 = zext i4 %326 to i5
+  br label %__elem_3.exit79
+
+328:                                              ; preds = %324
+  %329 = or i4 %325, -8
+  %330 = zext i4 %329 to i5
+  br label %__elem_3.exit79
+
+331:                                              ; preds = %314
+  br i1 %318, label %334, label %codeRepl.i1.i78
+
+codeRepl.i1.i78:                                  ; preds = %331
+  %332 = or i3 %.sink.i8.i75, -4
+  %333 = zext i3 %332 to i5
+  br label %__elem_3.exit79
+
+334:                                              ; preds = %331
+  %335 = zext i3 %.sink.i8.i75 to i5
+  br label %__elem_3.exit79
+
+__elem_3.exit79:                                  ; preds = %codeRepl.i.i76, %328, %codeRepl.i1.i78, %334
+  %.sink17.i77 = phi i5 [ %333, %codeRepl.i1.i78 ], [ %335, %334 ], [ %330, %328 ], [ %327, %codeRepl.i.i76 ]
+  %336 = zext i5 %.sink17.i77 to i6
+  %337 = zext i6 %336 to i7
+  %338 = or i7 -64, %337
+  %339 = zext i7 %338 to i8
+  tail call void @putchar(i8 %339)
+  br label %__elem_0.4.exit
+
+340:                                              ; preds = %231
+  br i1 %6, label %394, label %341
+
+341:                                              ; preds = %340
+  br i1 %8, label %368, label %codeRepl.i.i9
+
+codeRepl.i.i9:                                    ; preds = %341
+  %342 = and i8 %1, 8
+  %343 = icmp eq i8 %342, 0
+  %344 = and i8 %1, 4
+  %345 = icmp eq i8 %344, 0
+  %346 = and i8 %1, 2
+  %347 = icmp eq i8 %346, 0
+  %348 = and i8 %1, 1
+  %349 = trunc i8 %348 to i3
+  %350 = icmp eq i8 %348, 0
+  %..i7.i80 = select i1 %350, i3 2, i3 3
+  %.sink.i8.i81 = select i1 %347, i3 %349, i3 %..i7.i80
+  br i1 %343, label %358, label %351
+
+351:                                              ; preds = %codeRepl.i.i9
+  %352 = zext i3 %.sink.i8.i81 to i4
+  br i1 %345, label %355, label %codeRepl.i.i82
+
+codeRepl.i.i82:                                   ; preds = %351
+  %353 = or i4 %352, -4
+  %354 = zext i4 %353 to i5
+  br label %__elem_3.exit85
+
+355:                                              ; preds = %351
+  %356 = or i4 %352, -8
+  %357 = zext i4 %356 to i5
+  br label %__elem_3.exit85
+
+358:                                              ; preds = %codeRepl.i.i9
+  br i1 %345, label %361, label %codeRepl.i1.i84
+
+codeRepl.i1.i84:                                  ; preds = %358
+  %359 = or i3 %.sink.i8.i81, -4
+  %360 = zext i3 %359 to i5
+  br label %__elem_3.exit85
+
+361:                                              ; preds = %358
+  %362 = zext i3 %.sink.i8.i81 to i5
+  br label %__elem_3.exit85
+
+__elem_3.exit85:                                  ; preds = %codeRepl.i.i82, %355, %codeRepl.i1.i84, %361
+  %.sink17.i83 = phi i5 [ %360, %codeRepl.i1.i84 ], [ %362, %361 ], [ %357, %355 ], [ %354, %codeRepl.i.i82 ]
+  %363 = or i5 %.sink17.i83, -16
+  %364 = zext i5 %363 to i6
+  %365 = or i6 -32, %364
+  %366 = zext i6 %365 to i7
+  %367 = zext i7 %366 to i8
+  tail call void @putchar(i8 %367)
+  br label %__elem_0.4.exit
+
+368:                                              ; preds = %341
+  %369 = and i8 %1, 8
+  %370 = icmp eq i8 %369, 0
+  %371 = and i8 %1, 4
+  %372 = icmp eq i8 %371, 0
+  %373 = and i8 %1, 2
+  %374 = icmp eq i8 %373, 0
+  %375 = and i8 %1, 1
+  %376 = trunc i8 %375 to i3
+  %377 = icmp eq i8 %375, 0
+  %..i7.i86 = select i1 %377, i3 2, i3 3
+  %.sink.i8.i87 = select i1 %374, i3 %376, i3 %..i7.i86
+  br i1 %370, label %385, label %378
+
+378:                                              ; preds = %368
+  %379 = zext i3 %.sink.i8.i87 to i4
+  br i1 %372, label %382, label %codeRepl.i.i88
+
+codeRepl.i.i88:                                   ; preds = %378
+  %380 = or i4 %379, -4
+  %381 = zext i4 %380 to i5
+  br label %__elem_3.exit91
+
+382:                                              ; preds = %378
+  %383 = or i4 %379, -8
+  %384 = zext i4 %383 to i5
+  br label %__elem_3.exit91
+
+385:                                              ; preds = %368
+  br i1 %372, label %388, label %codeRepl.i1.i90
+
+codeRepl.i1.i90:                                  ; preds = %385
+  %386 = or i3 %.sink.i8.i87, -4
+  %387 = zext i3 %386 to i5
+  br label %__elem_3.exit91
+
+388:                                              ; preds = %385
+  %389 = zext i3 %.sink.i8.i87 to i5
+  br label %__elem_3.exit91
+
+__elem_3.exit91:                                  ; preds = %codeRepl.i.i88, %382, %codeRepl.i1.i90, %388
+  %.sink17.i89 = phi i5 [ %387, %codeRepl.i1.i90 ], [ %389, %388 ], [ %384, %382 ], [ %381, %codeRepl.i.i88 ]
+  %390 = zext i5 %.sink17.i89 to i6
+  %391 = or i6 -32, %390
+  %392 = zext i6 %391 to i7
+  %393 = zext i7 %392 to i8
+  tail call void @putchar(i8 %393)
+  br label %__elem_0.4.exit
+
+394:                                              ; preds = %340
+  br i1 %8, label %420, label %codeRepl.i1.i10
+
+codeRepl.i1.i10:                                  ; preds = %394
+  %395 = and i8 %1, 8
+  %396 = icmp eq i8 %395, 0
+  %397 = and i8 %1, 4
+  %398 = icmp eq i8 %397, 0
+  %399 = and i8 %1, 2
+  %400 = icmp eq i8 %399, 0
+  %401 = and i8 %1, 1
+  %402 = trunc i8 %401 to i3
+  %403 = icmp eq i8 %401, 0
+  %..i7.i92 = select i1 %403, i3 2, i3 3
+  %.sink.i8.i93 = select i1 %400, i3 %402, i3 %..i7.i92
+  br i1 %396, label %411, label %404
+
+404:                                              ; preds = %codeRepl.i1.i10
+  %405 = zext i3 %.sink.i8.i93 to i4
+  br i1 %398, label %408, label %codeRepl.i.i94
+
+codeRepl.i.i94:                                   ; preds = %404
+  %406 = or i4 %405, -4
+  %407 = zext i4 %406 to i5
+  br label %__elem_3.exit97
+
+408:                                              ; preds = %404
+  %409 = or i4 %405, -8
+  %410 = zext i4 %409 to i5
+  br label %__elem_3.exit97
+
+411:                                              ; preds = %codeRepl.i1.i10
+  br i1 %398, label %414, label %codeRepl.i1.i96
+
+codeRepl.i1.i96:                                  ; preds = %411
+  %412 = or i3 %.sink.i8.i93, -4
+  %413 = zext i3 %412 to i5
+  br label %__elem_3.exit97
+
+414:                                              ; preds = %411
+  %415 = zext i3 %.sink.i8.i93 to i5
+  br label %__elem_3.exit97
+
+__elem_3.exit97:                                  ; preds = %codeRepl.i.i94, %408, %codeRepl.i1.i96, %414
+  %.sink17.i95 = phi i5 [ %413, %codeRepl.i1.i96 ], [ %415, %414 ], [ %410, %408 ], [ %407, %codeRepl.i.i94 ]
+  %416 = or i5 %.sink17.i95, -16
+  %417 = zext i5 %416 to i6
+  %418 = zext i6 %417 to i7
+  %419 = zext i7 %418 to i8
+  tail call void @putchar(i8 %419)
+  br label %__elem_0.4.exit
+
+420:                                              ; preds = %394
+  %421 = and i8 %1, 8
+  %422 = icmp eq i8 %421, 0
+  %423 = and i8 %1, 4
+  %424 = icmp eq i8 %423, 0
+  %425 = and i8 %1, 2
+  %426 = icmp eq i8 %425, 0
+  %427 = and i8 %1, 1
+  %428 = trunc i8 %427 to i3
+  %429 = icmp eq i8 %427, 0
+  %..i7.i98 = select i1 %429, i3 2, i3 3
+  %.sink.i8.i99 = select i1 %426, i3 %428, i3 %..i7.i98
+  br i1 %422, label %437, label %430
+
+430:                                              ; preds = %420
+  %431 = zext i3 %.sink.i8.i99 to i4
+  br i1 %424, label %434, label %codeRepl.i.i100
+
+codeRepl.i.i100:                                  ; preds = %430
+  %432 = or i4 %431, -4
+  %433 = zext i4 %432 to i5
+  br label %__elem_3.exit103
+
+434:                                              ; preds = %430
+  %435 = or i4 %431, -8
+  %436 = zext i4 %435 to i5
+  br label %__elem_3.exit103
+
+437:                                              ; preds = %420
+  br i1 %424, label %440, label %codeRepl.i1.i102
+
+codeRepl.i1.i102:                                 ; preds = %437
+  %438 = or i3 %.sink.i8.i99, -4
+  %439 = zext i3 %438 to i5
+  br label %__elem_3.exit103
+
+440:                                              ; preds = %437
+  %441 = zext i3 %.sink.i8.i99 to i5
+  br label %__elem_3.exit103
+
+__elem_3.exit103:                                 ; preds = %codeRepl.i.i100, %434, %codeRepl.i1.i102, %440
+  %.sink17.i101 = phi i5 [ %439, %codeRepl.i1.i102 ], [ %441, %440 ], [ %436, %434 ], [ %433, %codeRepl.i.i100 ]
+  %442 = zext i5 %.sink17.i101 to i6
+  %443 = zext i6 %442 to i7
+  %444 = zext i7 %443 to i8
+  tail call void @putchar(i8 %444)
+  br label %__elem_0.4.exit
 }
 
 attributes #0 = { nofree nounwind }

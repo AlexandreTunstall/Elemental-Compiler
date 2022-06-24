@@ -195,15 +195,10 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
                 (_, DeadNode {}) -> pure ()
                 (BoxNode {}, _) -> pure ()
                 (_, BoxNode {}) -> pure ()
-                -- These nodes might require prettyprinting very large blocks.
-                (AccumNBNode {}, _) -> pure ()
-                (_, AccumNBNode {}) -> pure ()
-                (IONode {}, _) -> pure ()
-                (_, IONode {}) -> pure ()
-                (NamedBlockNode {}, _) -> pure ()
-                (_, NamedBlockNode {}) -> pure ()
-                (Merge1Node {}, _) -> pure ()
-                (_, Merge1Node {}) -> pure ()
+                (TBuildNode {}, TSplitNode {}) -> pure ()
+                (TSplitNode {}, TBuildNode {}) -> pure ()
+                (TCloseNode {}, _) -> pure ()
+                (_, TCloseNode {}) -> pure ()
                 _ -> liftIO $ hPrint h
                     $ pretty count
                     <+> pretty netSize
@@ -270,14 +265,15 @@ _Stats = iso unStats Stats
 data NodeHead
     = AppHead | LamHead | DupHead | DeadHead | BoxHead
     | ExternalRootHead | PrivateRootHead | AccumIOHead | AccumNBHead
-    | OperandHead | OperandPHead
-    | IOHead | IOPHead | IOPureHead | IOContHead
-    | ReturnHead
-    | Bind0BHead | Bind0FHead | Bind1FHead
-    | Branch0Head | Branch0FHead | Branch1Head
+    | OperandHead | OperandAHead | OperandPHead
+    | IOHead | IOAHead | IOPHead | IOPureHead | IOContHead
+    | ReturnCHead | ReturnFHead
+    | Bind0BHead | Bind0CHead | Bind0FHead | Bind1CHead | Bind1FHead
+    | Branch0Head | Branch0CHead | Branch0FHead | Branch1Head
     | LabelHead | NamedBlockHead | Merge0Head | Merge1Head
     | TBuildHead | TEntryHead | TSplitHead
     | TCloseHead | TLeaveHead | TMatchHead
+    | PArgumentHead | PReduceHead
     deriving stock (Eq, Ord)
 
 instance Pretty NodeHead where
@@ -291,16 +287,22 @@ instance Pretty NodeHead where
     pretty AccumNBHead = "AccumNB"
     pretty BoxHead = "Box"
     pretty OperandHead = "Operand"
+    pretty OperandAHead = "OperandA"
     pretty OperandPHead = "OperandP"
     pretty IOHead = "IO"
+    pretty IOAHead = "IOA"
     pretty IOPHead = "IOP"
     pretty IOPureHead = "IOPure"
     pretty IOContHead = "IOCont"
-    pretty ReturnHead = "Return"
+    pretty ReturnCHead = "ReturnC"
+    pretty ReturnFHead = "ReturnF"
     pretty Bind0BHead = "Bind0B"
+    pretty Bind0CHead = "Bind0C"
     pretty Bind0FHead = "Bind0F"
+    pretty Bind1CHead = "Bind1C"
     pretty Bind1FHead = "Bind1F"
     pretty Branch0Head = "Branch0"
+    pretty Branch0CHead = "Branch0C"
     pretty Branch0FHead = "Branch0F"
     pretty Branch1Head = "Branch1"
     pretty LabelHead = "Label"
@@ -313,6 +315,8 @@ instance Pretty NodeHead where
     pretty TCloseHead = "TClose"
     pretty TLeaveHead = "TLeave"
     pretty TMatchHead = "TMatch"
+    pretty PArgumentHead = "PArgument"
+    pretty PReduceHead = "PReduce"
 
 nodeHead :: INetF a -> NodeHead
 nodeHead x = case x of
@@ -326,16 +330,22 @@ nodeHead x = case x of
     AccumIONode {} -> AccumIOHead
     AccumNBNode {} -> AccumNBHead
     OperandNode {} -> OperandHead
+    OperandANode {} -> OperandAHead
     OperandPNode {} -> OperandPHead
     IONode {} -> IOHead
+    IOANode {} -> IOAHead
     IOPNode {} -> IOPHead
     IOPureNode {} -> IOPureHead
     IOContNode {} -> IOContHead
-    ReturnNode {} -> ReturnHead
+    ReturnCNode {} -> ReturnCHead
+    ReturnFNode {} -> ReturnFHead
     Bind0BNode {} -> Bind0BHead
+    Bind0CNode {} -> Bind0CHead
     Bind0FNode {} -> Bind0FHead
+    Bind1CNode {} -> Bind1CHead
     Bind1FNode {} -> Bind1FHead
     Branch0Node {} -> Branch0Head
+    Branch0CNode {} -> Branch0CHead
     Branch0FNode {} -> Branch0FHead
     Branch1Node {} -> Branch1Head
     LabelNode {} -> LabelHead
@@ -348,6 +358,8 @@ nodeHead x = case x of
     TCloseNode {} -> TCloseHead
     TLeaveNode {} -> TLeaveHead
     TMatchNode {} -> TMatchHead
+    PArgumentNode {} -> PArgumentHead
+    PReduceNode {} -> PReduceHead
 
 hPutDoc :: Handle -> Doc ann -> IO ()
 hPutDoc h doc = renderIO h $ layoutPretty opts doc

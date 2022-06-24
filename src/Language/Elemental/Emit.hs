@@ -96,12 +96,16 @@ emitDecl scopeTypes scope rr = \case
             bname = backendForeignName fname
         rn1 <- newNode $ ExternalRootNode bname bargs bret ()
         rn2 <- newNode $ AccumIONode mempty () ()
-        rn3 <- newNode $ Bind0FNode () ()
+        rn3 <- newNode $ Bind0CNode () ()
         rn4 <- newNode $ AppNode () () ()
+        rn5 <- newNode $ LamNode () () ()
+        rn6 <- newNode $ ReturnCNode () ()
         linkNodes (Ref rn1 0) (Ref rn2 1)
         linkNodes (Ref rn2 0) (Ref rn4 2)
         linkNodes (Ref rn3 1) (Ref rn4 0)
-        mkLambda (Ref rn4 1) ReturnNode
+        linkNodes (Ref rn4 1) (Ref rn5 0)
+        linkNodes (Ref rn5 1) (Ref rn6 1)
+        linkNodes (Ref rn5 2) (Ref rn6 0)
         emitExpr scope (Ref rn3 0) $ applyArgs ltret ltargs ops
             $ wrapExport SZero scopeTypes t expr
         pure mempty
@@ -173,7 +177,7 @@ emitExpr scope rr = \case
         linkNodes rr $ Ref rn1 0
     BackendIO _ instr -> propagate1 rr $ IOContNode instr
     BackendPIO _ _ pio
-        -> mkLambda rr $ IOPNode (Backend.Partial (SSucc SZero) pio)
+        -> propagate1 rr $ IOANode (Backend.Partial (SSucc SZero) pio)
     PureIO -> do
         rn1 <- newNode $ LamNode () () ()
         rn2 <- newNode $ IOPureNode () ()
@@ -202,16 +206,16 @@ emitExpr scope rr = \case
         let callp = Backend.Partial len $ withVarargs len
                 $ Backend.Call (backendType tret) (Backend.ExternalName fname)
             len = sLength ltargs
-        mkLambda rr $ IOPNode callp
+        propagate1 rr $ IOANode callp
     IsolateBit bidx ssize -> do
         let opp = Backend.Partial (SSucc SZero) $ mkIsolateBit size bidx'
             size = fromIntegral $ toNatural ssize
             bidx' = fromIntegral $ toNatural bidx
-        mkLambda rr $ OperandPNode opp
+        propagate1 rr $ OperandANode opp
     InsertBit ssize -> do
         let opp = Backend.Partial (SSucc $ SSucc SZero) $ Backend.InsertBit size
             size = fromIntegral $ toNatural ssize
-        mkLambda rr $ OperandPNode opp
+        propagate1 rr $ OperandANode opp
     TestBit -> mkLambda rr Branch0Node
   where
     coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
