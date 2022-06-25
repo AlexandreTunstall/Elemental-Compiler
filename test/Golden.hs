@@ -195,8 +195,8 @@ instance (MonadIO m, Has (State Count) sig m, Has (State INet) sig m
                 (_, DeadNode {}) -> pure ()
                 (BoxNode {}, _) -> pure ()
                 (_, BoxNode {}) -> pure ()
-                (TBuildNode {}, TSplitNode {}) -> pure ()
-                (TSplitNode {}, TBuildNode {}) -> pure ()
+                (TCrossNode {}, TSplitNode {}) -> pure ()
+                (TSplitNode {}, TCrossNode {}) -> pure ()
                 (TCloseNode {}, _) -> pure ()
                 (_, TCloseNode {}) -> pure ()
                 _ -> liftIO $ hPrint h
@@ -271,7 +271,7 @@ data NodeHead
     | Bind0BHead | Bind0CHead | Bind0FHead | Bind1CHead | Bind1FHead
     | Branch0CHead | Branch0FHead
     | LabelHead | NamedBlockHead | Merge0Head | Merge1Head
-    | TBuildHead | TEntryHead | TSplitHead
+    | TBuildHead | TCrossHead | TEntryHead | TSplitHead
     | TCloseHead | TLeaveHead | TMatchHead
     | PArgumentHead | PReduceHead
     deriving stock (Eq, Ord)
@@ -308,6 +308,7 @@ instance Pretty NodeHead where
     pretty Merge0Head = "Merge0"
     pretty Merge1Head = "Merge1"
     pretty TBuildHead = "TBuild"
+    pretty TCrossHead = "TCross"
     pretty TEntryHead = "TEntry"
     pretty TSplitHead = "TSplit"
     pretty TCloseHead = "TClose"
@@ -349,6 +350,7 @@ nodeHead x = case x of
     Merge0Node {} -> Merge0Head
     Merge1Node {} -> Merge1Head
     TBuildNode {} -> TBuildHead
+    TCrossNode {} -> TCrossHead
     TEntryNode {} -> TEntryHead
     TSplitNode {} -> TSplitHead
     TCloseNode {} -> TCloseHead

@@ -226,6 +226,8 @@ data INetF a
     | Merge1Node B.NamedBlockList a a
     -- | (a, T, T, a)
     | TBuildNode !Level BuildType B.Name a a a a
+    -- | (T, T, T)
+    | TCrossNode !Level B.Name a a a
     -- | (B, T)
     | TEntryNode B.Name B.Operand a a
     -- | (T, T, T)
@@ -297,6 +299,9 @@ instance Pretty a => Pretty (INetF a) where
     pretty (TBuildNode lvl t namep r0 r1 r2 r3) = "TBuild"
         <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
         <+> pretty t <+> pretty namep
+    pretty (TCrossNode lvl namep r0 r1 r2)
+        = "TCross" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
+        <+> pretty namep
     pretty (TEntryNode name opp r0 r1)
         = "TEntry" <+> pretty r0 <+> pretty r1 <+> pretty name <+> pretty opp
     pretty (TSplitNode r0 r1 r2)
@@ -674,67 +679,58 @@ reduceNode (AccumIONode ib _ r0) (TEntryNode name opp _ r1) = do
     propagate1 r0 $ IONode $ B.BlockList (B.Block (B.unIBlock ib) term) mempty
     propagate1 r1 TCloseNode
 reduceNode n0@TEntryNode {} n1@AccumIONode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl t namep _ r0 r1 r2) (TEntryNode name opp _ r3) = do
-    rn4 <- newNode $ TBuildNode lvl t namep () () () ()
-    rn5 <- newNode $ TEntryNode name opp () ()
-    linkNodes (Ref rn4 3) (Ref rn5 1)
+reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (TEntryNode name opp _ r3) = do
+    let term = B.TailCall name opp
+    rn4 <- newNode $ TCrossNode lvl namep () () ()
+    propagate1 r2 $ IONode $ B.BlockList (B.Block mempty term) mempty
     linkNodes r0 $ Ref rn4 1
     linkNodes r1 $ Ref rn4 2
-    linkNodes r2 $ Ref rn5 0
     linkNodes r3 $ Ref rn4 0
 reduceNode n0@TEntryNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl t namep _ r0 r1 r2) (TSplitNode _ r3 r4)
-    = commute2a (TBuildNode lvl t namep) TSplitNode r0 r1 r2 r3 r4
-reduceNode n0@TSplitNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (TCloseNode _)
-    = propagate3 r0 r1 r2 TCloseNode
-reduceNode n0@TCloseNode {} n1@TBuildNode {} = reduceNode n1 n0
+reduceNode (TCrossNode lvl namep _ r0 r1) (TSplitNode _ r2 r3)
+    = commute2 (TCrossNode lvl namep) TSplitNode r0 r1 r2 r3
+reduceNode n0@TSplitNode {} n1@TCrossNode {} = reduceNode n1 n0
+reduceNode (TCrossNode _ _ _ r0 r1) (TCloseNode _) = propagate2 r0 r1 TCloseNode
+reduceNode n0@TCloseNode {} n1@TCrossNode {} = reduceNode n1 n0
 reduceNode (TSplitNode _ r0 r1) (TCloseNode _) = propagate2 r0 r1 TCloseNode
 reduceNode n0@TCloseNode {} n1@TSplitNode {} = reduceNode n1 n0
 reduceNode (TCloseNode _) (TCloseNode _) = pure ()
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (TLeaveNode t _ r3 r4) = do
-    rn5 <- newNode $ TBuildNode lvl t namep () () () ()
-    rn6 <- newNode $ TLeaveNode t () () ()
-    linkNodes (Ref rn5 3) (Ref rn6 1)
-    linkNodes r0 $ Ref rn5 1
-    linkNodes r1 $ Ref rn5 2
-    linkNodes r2 $ Ref rn6 0
-    linkNodes r3 $ Ref rn5 0
-    linkNodes r4 $ Ref rn6 2
-reduceNode n0@TLeaveNode {} n1@TBuildNode {} = reduceNode n1 n0
+reduceNode (TCrossNode lvl namep _ r0 r1) (TLeaveNode t _ r2 r3) = do
+    rn4 <- newNode $ TBuildNode lvl t namep () () () ()
+    linkNodes r0 $ Ref rn4 1
+    linkNodes r1 $ Ref rn4 2
+    linkNodes r2 $ Ref rn4 0
+    linkNodes r3 $ Ref rn4 3
+reduceNode n0@TLeaveNode {} n1@TCrossNode {} = reduceNode n1 n0
 reduceNode (TLeaveNode _ _ r0 r1) (TCloseNode _) = linkNodes r0 r1
 reduceNode n0@TCloseNode {} n1@TLeaveNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (TMatchNode lvl1 _ r3 r4 r5)
+reduceNode (TCrossNode lvl0 namep _ r0 r1) (TMatchNode lvl1 _ r2 r3 r4)
     | lvl0 == lvl1 = do
-        linkNodes r0 r3
-        linkNodes r1 r4
-        propagate1 r2 TCloseNode
-        propagate1 r5 $ OperandNode $ B.Reference (B.IntType 1) namep
+        linkNodes r0 r2
+        linkNodes r1 r3
+        propagate1 r4 $ OperandNode $ B.Reference (B.IntType 1) namep
     | otherwise = do
         let opp = B.Partial (SSucc $ SSucc SZero) $ mkSelect
                 $ B.Reference (B.IntType 1) namep
-        rn6 <- newNode $ TBuildNode lvl0 t namep () () () ()
-        rn7 <- newNode $ TBuildNode lvl0 t namep () () () ()
+        rn5 <- newNode $ TCrossNode lvl0 namep () () ()
+        rn6 <- newNode $ TCrossNode lvl0 namep () () ()
+        rn7 <- newNode $ TMatchNode lvl1 () () () ()
         rn8 <- newNode $ TMatchNode lvl1 () () () ()
-        rn9 <- newNode $ TMatchNode lvl1 () () () ()
-        rn10 <- newNode $ OperandPNode opp () ()
-        rn11 <- newNode $ AppNode () () ()
-        linkNodes (Ref rn6 1) (Ref rn8 1)
-        linkNodes (Ref rn6 2) (Ref rn9 1)
-        propagate1 (Ref rn6 3) TCloseNode
-        linkNodes (Ref rn7 1) (Ref rn8 2)
-        linkNodes (Ref rn7 2) (Ref rn9 2)
-        propagate1 (Ref rn7 3) TCloseNode
-        linkNodes (Ref rn8 3) (Ref rn10 0)
-        linkNodes (Ref rn9 3) (Ref rn11 1)
-        linkNodes (Ref rn10 1) (Ref rn11 0)
-        linkNodes r0 $ Ref rn8 0
-        linkNodes r1 $ Ref rn9 0
-        propagate1 r2 TCloseNode
+        rn9 <- newNode $ OperandPNode opp () ()
+        rn10 <- newNode $ AppNode () () ()
+        linkNodes (Ref rn5 1) (Ref rn7 1)
+        linkNodes (Ref rn5 2) (Ref rn8 1)
+        linkNodes (Ref rn6 1) (Ref rn7 2)
+        linkNodes (Ref rn6 2) (Ref rn8 2)
+        linkNodes (Ref rn7 3) (Ref rn9 0)
+        linkNodes (Ref rn8 3) (Ref rn10 1)
+        linkNodes (Ref rn9 1) (Ref rn10 0)
+        linkNodes r0 $ Ref rn7 0
+        linkNodes r1 $ Ref rn8 0
+        linkNodes r2 $ Ref rn5 0
         linkNodes r3 $ Ref rn6 0
-        linkNodes r4 $ Ref rn7 0
-        linkNodes r5 $ Ref rn11 2
-reduceNode n0@TMatchNode {} n1@TBuildNode {} = reduceNode n1 n0
+        linkNodes r4 $ Ref rn10 2
+reduceNode n0@TMatchNode {} n1@TCrossNode {} = reduceNode n1 n0
 reduceNode (PArgumentNode _ r0 r1) (AppNode _ r2 r3) = do
     rn4 <- newNode $ PArgumentNode () () ()
     rn5 <- newNode $ PArgumentNode () () ()
@@ -1009,6 +1005,11 @@ reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3) = do
     linkNodes r2 $ Ref rn4 3
     linkNodes r3 $ Ref rn4 0
 reduceNode n0@BoxNode {} n1@TBuildNode {} = reduceNode n1 n0
+reduceNode (TCrossNode lvl0 namep _ r0 r1) (BoxNode lvl1 _ r2) = commute1
+    (TCrossNode (if lvl0 < lvl1 then lvl0 else succ lvl0) namep)
+    (BoxNode lvl1)
+    r0 r1 r2
+reduceNode n0@BoxNode {} n1@TCrossNode {} = reduceNode n1 n0
 reduceNode (TEntryNode name opp _ r0) (BoxNode lvl _ r1)
     = commute0 (TEntryNode name opp) (BoxNode lvl) r0 r1
 reduceNode n0@BoxNode {} n1@TEntryNode {} = reduceNode n1 n0
