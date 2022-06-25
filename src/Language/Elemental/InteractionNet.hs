@@ -120,9 +120,9 @@ _INetPairs = iso unINetPairs INetPairs
 
 -- | A reference to a port in an interaction net.
 data Ref = Ref
-    { refNode :: Int
+    { refNode :: {-# UNPACK #-} !Int
     -- ^ The index of the port's node.
-    , refPort :: Int
+    , refPort :: {-# UNPACK #-} !Int
     -- ^ The index of the port within the node's port list.
     } deriving stock (Eq, Ord, Show)
 
@@ -168,11 +168,11 @@ data INetF a
     -- | (a -> b, a, b)
     | LamNode a a a
     -- | (a, a, a)
-    | DupNode Level a a a
+    | DupNode !Level a a a
     -- | a
     | DeadNode a
     -- | (a, a) and the non-principal node is in a new box.
-    | BoxNode Level a a
+    | BoxNode !Level a a
     -- FFI
     -- | CB
     | ExternalRootNode B.ForeignName [B.Named B.Type] B.Type a
@@ -225,7 +225,7 @@ data INetF a
     -- | (NB, NB)
     | Merge1Node B.NamedBlockList a a
     -- | (a, T, T, a)
-    | TBuildNode Level BuildType B.Name a a a a
+    | TBuildNode !Level BuildType B.Name a a a a
     -- | (B, T)
     | TEntryNode B.Name B.Operand a a
     -- | (T, T, T)
@@ -235,7 +235,7 @@ data INetF a
     -- | (T, a, a)
     | TLeaveNode BuildType a a a
     -- | (T, T, T, i1)
-    | TMatchNode Level a a a a
+    | TMatchNode !Level a a a a
     -- | (a, i{n} -> a, i{n})
     | PArgumentNode a a a
     -- | (a, a)
