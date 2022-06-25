@@ -744,6 +744,30 @@ reduceNode (PArgumentNode _ r0 r1) (AppNode _ r2 r3) = do
     linkNodes r2 $ Ref rn5 2
     linkNodes r3 $ Ref rn5 0
 reduceNode n0@AppNode {} n1@PArgumentNode {} = reduceNode n1 n0
+reduceNode (PArgumentNode _ r0 r1) (OperandPNode opp _ r2) = do
+    rn3 <- newNode $ AppNode () () ()
+    rn4 <- newNode $ PReduceNode () ()
+    rn5 <- newNode $ PReduceNode () ()
+    rn6 <- newNode $ OperandPNode opp () ()
+    linkNodes (Ref rn3 0) (Ref rn4 1)
+    linkNodes (Ref rn3 1) (Ref rn5 1)
+    linkNodes (Ref rn3 2) (Ref rn6 0)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn5 0
+    linkNodes r2 $ Ref rn6 1
+reduceNode n0@OperandPNode {} n1@PArgumentNode {} = reduceNode n1 n0
+reduceNode (PArgumentNode _ r0 r1) (IOPNode iop _ r2) = do
+    rn3 <- newNode $ AppNode () () ()
+    rn4 <- newNode $ PReduceNode () ()
+    rn5 <- newNode $ PReduceNode () ()
+    rn6 <- newNode $ IOPNode iop () ()
+    linkNodes (Ref rn3 0) (Ref rn4 1)
+    linkNodes (Ref rn3 1) (Ref rn5 1)
+    linkNodes (Ref rn3 2) (Ref rn6 0)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn5 0
+    linkNodes r2 $ Ref rn6 1
+reduceNode n0@IOPNode {} n1@PArgumentNode {} = reduceNode n1 n0
 reduceNode (PArgumentNode _ r0 r1) (PReduceNode _ r2) = do
     rn3 <- newNode $ AppNode () () ()
     rn4 <- newNode $ PReduceNode () ()
@@ -769,6 +793,9 @@ reduceNode n0@IOContNode {} n1@PReduceNode {} = reduceNode n1 n0
 reduceNode (DupNode _ _ r0 r1) (OperandNode op _)
     = propagate2 r0 r1 $ OperandNode op
 reduceNode n0@OperandNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode _ _ r0 r1) (OperandANode opp _)
+    = propagate2 r0 r1 $ OperandANode opp
+reduceNode n0@OperandANode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (OperandPNode opp _ r2)
     = commute1 (DupNode lvl) (OperandPNode opp) r0 r1 r2
 reduceNode n0@OperandPNode {} n1@DupNode {} = reduceNode n1 n0
@@ -776,6 +803,8 @@ reduceNode (DupNode lvl _ r0 r1) (IONode bs _) = do
     rn2 <- newNode $ IONode bs ()
     dedupIO lvl r0 r1 $ Ref rn2 0
 reduceNode n0@IONode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode _ _ r0 r1) (IOANode iop _) = propagate2 r0 r1 $ IOANode iop
+reduceNode n0@IOANode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (IOPNode iop _ r2)
     = commute1 (DupNode lvl) (IOPNode iop) r0 r1 r2
 reduceNode n0@IOPNode {} n1@DupNode {} = reduceNode n1 n0
@@ -872,6 +901,9 @@ reduceNode (DupNode lvl _ r0 r1) (TEntryNode name opp _ r2) = do
     linkNodes r2 $ Ref rn3 1
     dedupIO lvl r0 r1 $ Ref rn3 0
 reduceNode n0@TEntryNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode lvl _ r0 r1) (PArgumentNode _ r2 r3)
+    = commute2 (DupNode lvl) PArgumentNode r0 r1 r2 r3
+reduceNode n0@PArgumentNode {} n1@DupNode {} = reduceNode n1 n0
 -- FFI Dead
 reduceNode (AccumIONode ib _ r0) (DeadNode _) = propagate1 r0
     $ IONode $ B.BlockList (B.Block (B.unIBlock ib) B.Unreachable) mempty
