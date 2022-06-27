@@ -1377,40 +1377,6 @@ commute2' mk1a mk1b mk2a mk2b r0 r1 r2 r3 = do
     linkNodes r3 $ Ref rn5 0
 {-# INLINABLE commute2' #-}
 
-commute2a
-    :: HasRewriter sig m
-    => (() -> () -> () -> () -> INetF ())
-    -> (() -> () -> () -> INetF ())
-    -> Ref -> Ref -> Ref -> Ref -> Ref -> m ()
-commute2a mk1 mk2 = commute2a' mk1 mk2 mk2 mk2
-{-# INLINABLE commute2a #-}
-
-commute2a'
-    :: HasRewriter sig m
-    => (() -> () -> () -> () -> INetF ())
-    -> (() -> () -> () -> INetF ())
-    -> (() -> () -> () -> INetF ())
-    -> (() -> () -> () -> INetF ())
-    -> Ref -> Ref -> Ref -> Ref -> Ref -> m ()
-commute2a' mk1 mk2a mk2b mk2c r0 r1 r2 r3 r4 = do
-    rn5 <- newNode $ mk1 () () () ()
-    rn6 <- newNode $ mk1 () () () ()
-    rn7 <- newNode $ mk2a () () ()
-    rn8 <- newNode $ mk2b () () ()
-    rn9 <- newNode $ mk2c () () ()
-    linkNodes (Ref rn5 1) (Ref rn7 1)
-    linkNodes (Ref rn5 2) (Ref rn8 1)
-    linkNodes (Ref rn5 3) (Ref rn9 1)
-    linkNodes (Ref rn6 1) (Ref rn7 2)
-    linkNodes (Ref rn6 2) (Ref rn8 2)
-    linkNodes (Ref rn6 3) (Ref rn9 2)
-    linkNodes r0 $ Ref rn7 0
-    linkNodes r1 $ Ref rn8 0
-    linkNodes r2 $ Ref rn9 0
-    linkNodes r3 $ Ref rn5 0
-    linkNodes r4 $ Ref rn6 0
-{-# INLINABLE commute2a' #-}
-
 commute2b
     :: HasRewriter sig m
     => (() -> () -> () -> () -> INetF ())
@@ -1439,10 +1405,6 @@ propagate1 r0 mk1 = do
 propagate2 :: HasRewriter sig m => Ref -> Ref -> (() -> INetF ()) -> m ()
 propagate2 r0 r1 mk1 = propagate1 r0 mk1 *> propagate1 r1 mk1
 {-# INLINABLE propagate2 #-}
-
-propagate3 :: HasRewriter sig m => Ref -> Ref -> Ref -> (() -> INetF ()) -> m ()
-propagate3 r0 r1 r2 mk1 = propagate2 r0 r1 mk1 *> propagate1 r2 mk1
-{-# INLINABLE propagate3 #-}
 
 dedupIO :: HasRewriter sig m => Level -> Ref -> Ref -> Ref -> m ()
 dedupIO lvl r0 r1 r2 = do
