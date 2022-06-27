@@ -174,8 +174,8 @@ emitExpr scope rr = \case
         rn1 <- newNode $ OperandNode op ()
         linkNodes rr $ Ref rn1 0
     BackendIO _ instr -> propagate1 rr $ IOContNode instr
-    BackendPIO _ _ pio
-        -> propagate1 rr $ IOANode (Backend.Partial (SSucc SZero) pio)
+    BackendPIO _ tret pio -> propagate1 rr
+        $ IOANode (backendType tret) (Backend.Partial (SSucc SZero) pio)
     PureIO -> do
         rn1 <- newNode $ LamNode () () ()
         rn2 <- newNode $ IOPureNode () ()
@@ -204,7 +204,7 @@ emitExpr scope rr = \case
         let callp = Backend.Partial len $ withVarargs len
                 $ Backend.Call (backendType tret) (Backend.ExternalName fname)
             len = sLength ltargs
-        propagate1 rr $ IOANode callp
+        propagate1 rr $ IOANode (backendType tret) callp
     IsolateBit bidx ssize -> do
         let opp = Backend.Partial (SSucc SZero) $ mkIsolateBit size bidx'
             size = fromIntegral $ toNatural ssize
@@ -216,26 +216,25 @@ emitExpr scope rr = \case
         propagate1 rr $ OperandANode opp
     TestBit -> do
         rn1 <- newNode $ LamNode () () ()
-        rn2 <- newNode $ DupNode 0 () () ()
-        rn3 <- newNode $ AppNode () () ()
-        rn4 <- newNode $ AppNode () () ()
-        r5 <- mkChurchBool const
-        r6 <- mkChurchBool $ const id
-        rn7 <- newNode $ Branch0CNode () () () ()
-        rn8 <- newNode $ LamNode () () ()
-        rn9 <- newNode $ IOPureNode () ()
-        linkNodes (Ref rn1 0) (Ref rn9 1)
-        linkNodes (Ref rn1 1) (Ref rn2 0)
-        linkNodes (Ref rn1 2) (Ref rn7 0)
+        rn2 <- newNode $ IOPureNode () ()
+        rn3 <- newNode $ LamNode () () ()
+        rn4 <- newNode $ DupIONode 0 () () ()
+        rn5 <- newNode $ AppNode () () ()
+        rn6 <- newNode $ DupNode 0 () () ()
+        r7 <- mkChurchBool const
+        r8 <- mkChurchBool $ const id
+        rn9 <- newNode $ BoxNode 0 () ()
+        linkNodes (Ref rn1 1) (Ref rn9 0)
+        linkNodes (Ref rn1 2) (Ref rn2 0)
         linkNodes (Ref rn2 1) (Ref rn3 0)
-        linkNodes (Ref rn2 2) (Ref rn4 0)
-        linkNodes (Ref rn3 2) (Ref rn7 2)
-        linkNodes (Ref rn4 2) (Ref rn7 3)
-        linkNodes (Ref rn8 1) (Ref rn7 1)
-        linkNodes (Ref rn8 2) (Ref rn9 0)
-        linkNodes r5 $ Ref rn3 1
-        linkNodes r6 $ Ref rn4 1
-        linkNodes rr $ Ref rn8 0
+        linkNodes (Ref rn3 1) (Ref rn5 0)
+        linkNodes (Ref rn3 2) (Ref rn4 2)
+        linkNodes (Ref rn4 0) (Ref rn5 2)
+        linkNodes (Ref rn4 1) (Ref rn9 1)
+        linkNodes (Ref rn5 1) (Ref rn6 0)
+        linkNodes r7 $ Ref rn6 1
+        linkNodes r8 $ Ref rn6 2
+        linkNodes rr $ Ref rn1 0
   where
     coerceScope :: SList (Const a) as -> SList (Const a) (IncrementAll 'Zero as)
     coerceScope SNil = SNil

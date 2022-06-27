@@ -10,9 +10,12 @@ define void @main(i1) local_unnamed_addr {
 
 2:                                                ; preds = %1
   tail call void @t()
-  ret void
+  br label %__elem_0.exit
 
 3:                                                ; preds = %1
   tail call void @f()
+  br label %__elem_0.exit
+
+__elem_0.exit:                                    ; preds = %3, %2
   ret void
 }

@@ -42,6 +42,7 @@ module Language.Elemental.InteractionNet
     , INetF(..)
     , Ref(..)
     , Level(..)
+    , BuildType(..)
     , HasRewriter
     , compileINet
     , reduce
@@ -191,7 +192,7 @@ data INetF a
     -- | B
     | IONode B.BlockList a
     -- | {... ->} IO i{n}
-    | IOANode (B.Partial B.Instruction) a
+    | IOANode B.Type (B.Partial B.Instruction) a
     -- | (i{m}, {... ->} IO i{n})
     | IOPNode (B.Partial B.Instruction) a a
     -- | (IO a, (a -> B) -> B)
@@ -202,14 +203,16 @@ data INetF a
     | ReturnCNode a a
     -- | (i{n}, B)
     | ReturnFNode a a
+    -- | (i{n}, B)
+    | TailCallNode B.Name a a
     -- | (IO a, (a -> IO b) -> IO b)
     | Bind0BNode a a
     -- | (IO a, a -> B, B)
     | Bind0CNode a a a
-    -- | (IO a, a -> B, B)
+    -- | (IO a, B, B)
     | Bind0FNode B.Name a a a
     -- | (B, IO a, (a -> B) -> B)
-    | Bind1CNode a a a
+    | Bind1CNode B.Name a a a
     -- | (B, B)
     | Bind1FNode (B.Named B.Instruction) a a
     -- | (B, i{n}, B, B)
@@ -224,12 +227,16 @@ data INetF a
     | Merge0Node a a a
     -- | (NB, NB)
     | Merge1Node B.NamedBlockList a a
+    -- | (a, T, a)
+    | TBuild1Node !Level BuildType B.Operand a a a
     -- | (a, T, T, a)
-    | TBuildNode !Level BuildType B.Name a a a a
+    | TBuild2Node !Level BuildType B.Operand a a a a
+    -- | (T, T)
+    | TCross1Node !Level B.Operand a a
     -- | (T, T, T)
-    | TCrossNode !Level B.Name a a a
-    -- | (B, T)
-    | TEntryNode B.Name B.Operand a a
+    | TCross2Node !Level B.Operand a a a
+    -- | (B, T, B)
+    | TEntryNode a a a
     -- | (T, T, T)
     | TSplitNode a a a
     -- | T
@@ -239,9 +246,11 @@ data INetF a
     -- | (T, T, T, i1)
     | TMatchNode !Level a a a a
     -- | (a, i{n} -> a, i{n})
-    | PArgumentNode a a a
+    | PArgumentNode (Maybe B.Type) a a a
     -- | (a, a)
     | PReduceNode a a
+    -- | (B, i{n}, B)
+    | DupIONode !Level a a a
     deriving stock (Foldable, Functor, Traversable)
 
 instance Pretty a => Pretty (INetF a) where
@@ -267,7 +276,7 @@ instance Pretty a => Pretty (INetF a) where
     pretty (OperandPNode opp r0 r1)
         = "OperandP" <+> pretty r0 <+> pretty r1 <+> pretty opp
     pretty (IONode bs r0) = "IO" <+> pretty r0 <> nest 4 (line <> pretty bs)
-    pretty (IOANode iop r0) = "IOA" <+> pretty r0 <+> pretty iop
+    pretty (IOANode t iop r0) = "IOA" <+> pretty r0 <+> pretty t <+> pretty iop
     pretty (IOPNode iop r0 r1)
         = "IOP" <+> pretty r0 <+> pretty r1 <+> pretty iop
     pretty (IOPureNode r0 r1) = "IOPure" <+> pretty r0 <+> pretty r1
@@ -275,13 +284,15 @@ instance Pretty a => Pretty (INetF a) where
         = "IOCont" <+> pretty r0 <> nest 4 (line <> pretty instr)
     pretty (ReturnCNode r0 r1) = "ReturnC" <+> pretty r0 <+> pretty r1
     pretty (ReturnFNode r0 r1) = "ReturnF" <+> pretty r0 <+> pretty r1
+    pretty (TailCallNode name r0 r1)
+        = "TailCall" <+> pretty r0 <+> pretty r1 <+> pretty name
     pretty (Bind0BNode r0 r1) = "Bind0B" <+> pretty r0 <+> pretty r1
     pretty (Bind0CNode r0 r1 r2)
         = "Bind0C" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (Bind0FNode name r0 r1 r2)
         = "Bind0F" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty name
-    pretty (Bind1CNode r0 r1 r2)
-        = "Bind1C" <+> pretty r0 <+> pretty r1 <+> pretty r2
+    pretty (Bind1CNode name r0 r1 r2)
+        = "Bind1C" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty name
     pretty (Bind1FNode instr r0 r1)
         = "Bind1F" <+> pretty r0 <+> pretty r1 <> nest 4 (line <> pretty instr)
     pretty (Branch0CNode r0 r1 r2 r3)
@@ -296,14 +307,19 @@ instance Pretty a => Pretty (INetF a) where
         = "Merge0" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (Merge1Node nbs r0 r1)
         = "Merge1" <+> pretty r0 <+> pretty r1 <> nest 4 (line <> pretty nbs)
-    pretty (TBuildNode lvl t namep r0 r1 r2 r3) = "TBuild"
+    pretty (TBuild1Node lvl t namep r0 r1 r2) = "TBuild1"
+        <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
+        <+> pretty t <+> pretty namep
+    pretty (TBuild2Node lvl t namep r0 r1 r2 r3) = "TBuild2"
         <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
         <+> pretty t <+> pretty namep
-    pretty (TCrossNode lvl namep r0 r1 r2)
-        = "TCross" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
+    pretty (TCross1Node lvl namep r0 r1)
+        = "TCross1" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty namep
+    pretty (TCross2Node lvl namep r0 r1 r2)
+        = "TCross2" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
         <+> pretty namep
-    pretty (TEntryNode name opp r0 r1)
-        = "TEntry" <+> pretty r0 <+> pretty r1 <+> pretty name <+> pretty opp
+    pretty (TEntryNode r0 r1 r2)
+        = "TEntry" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (TSplitNode r0 r1 r2)
         = "TSplit" <+> pretty r0 <+> pretty r1 <+> pretty r2
     pretty (TCloseNode r0) = "TClose" <+> pretty r0
@@ -311,9 +327,11 @@ instance Pretty a => Pretty (INetF a) where
         = "TLeave" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty t
     pretty (TMatchNode lvl r0 r1 r2 r3) = "TMatch"
         <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty r3
-    pretty (PArgumentNode r0 r1 r2)
-        = "PArgument" <+> pretty r0 <+> pretty r1 <+> pretty r2
+    pretty (PArgumentNode t r0 r1 r2)
+        = "PArgument" <+> pretty r0 <+> pretty r1 <+> pretty r2 <+> pretty t
     pretty (PReduceNode r0 r1) = "PReduce" <+> pretty r0 <+> pretty r1
+    pretty (DupIONode lvl r0 r1 r2)
+        = "DupIO" <+> pretty lvl <+> pretty r0 <+> pretty r1 <+> pretty r2
 
 instance Ixed (INetF a) where
     ix idx f = indexing traverse $ Indexed go
@@ -474,8 +492,7 @@ reduceNode (AccumIONode ib _ r0) (ReturnCNode _ r1) = do
     linkNodes r0 $ Ref rn2 1
     linkNodes r1 $ Ref rn4 0
 reduceNode n0@ReturnCNode {} n1@AccumIONode {} = reduceNode n1 n0
-reduceNode (AccumIONode ib _ r0) (Bind1CNode _ r1 r2) = do
-    name <- newName
+reduceNode (AccumIONode ib _ r0) (Bind1CNode name _ r1 r2) = do
     rn3 <- newNode $ AccumIONode ib () ()
     rn4 <- newNode $ Bind0FNode name () () ()
     rn5 <- newNode $ PReduceNode () ()
@@ -506,7 +523,7 @@ reduceNode (AccumNBNode bs _ r0) (NamedBlockNode nbs _)
     = propagate1 r0 $ IONode $ B._namedBlocks %~ (<>) nbs $ bs
 reduceNode n0@NamedBlockNode {} n1@AccumNBNode {} = reduceNode n1 n0
 reduceNode (OperandANode opp _) (AppNode _ r0 r1) = do
-    rn2 <- newNode $ PArgumentNode () () ()
+    rn2 <- newNode $ PArgumentNode Nothing () () ()
     propagate1 (Ref rn2 1) $ OperandANode opp
     linkNodes r0 $ Ref rn2 2
     linkNodes r1 $ Ref rn2 0
@@ -516,9 +533,9 @@ reduceNode (OperandPNode opp _ r0) (OperandNode op _)
         Left opp' -> mkLambda r0 $ OperandPNode opp'
         Right op' -> propagate1 r0 $ OperandNode op'
 reduceNode n0@OperandNode {} n1@OperandPNode {} = reduceNode n1 n0
-reduceNode (IOANode iop _) (AppNode _ r0 r1) = do
-    rn2 <- newNode $ PArgumentNode () () ()
-    propagate1 (Ref rn2 1) $ IOANode iop
+reduceNode (IOANode t iop _) (AppNode _ r0 r1) = do
+    rn2 <- newNode $ PArgumentNode (Just t) () () ()
+    propagate1 (Ref rn2 1) $ IOANode t iop
     linkNodes r0 $ Ref rn2 2
     linkNodes r1 $ Ref rn2 0
 reduceNode n0@AppNode {} n1@IOANode {} = reduceNode n1 n0
@@ -527,20 +544,22 @@ reduceNode (IOPNode iop _ r0) (OperandNode op _)
         Left iop' -> mkLambda r0 $ IOPNode iop'
         Right instr -> propagate1 r0 $ IOContNode instr
 reduceNode n0@OperandNode {} n1@IOPNode {} = reduceNode n1 n0
-reduceNode (ReturnFNode _ r0) (OperandNode op _) = propagate1 r0
-    $ IONode $ B.BlockList (B.Block mempty $ B.Return op) mempty
+reduceNode (ReturnFNode _ r0) (OperandNode op _)
+    = propagate1 r0 $ IONode $ B.BlockList (B.Block mempty $ B.Return op) mempty
 reduceNode n0@OperandNode {} n1@ReturnFNode {} = reduceNode n1 n0
+reduceNode (TailCallNode name _ r0) (OperandNode op _) = propagate1 r0
+    $ IONode $ B.BlockList (B.Block mempty $ B.TailCall name op) mempty
 reduceNode (Bind0BNode _ r0) (IOPureNode _ r1) = reassocPure r0 r1
 reduceNode n0@IOPureNode {} n1@Bind0BNode {} = reduceNode n1 n0
 reduceNode (Bind0BNode _ r0) (IOContNode instr _) = do
     rn1 <- newNode $ IOContNode instr ()
-    reassocCont r0 $ Ref rn1 0
+    reassocCont (B.instrType instr) r0 $ Ref rn1 0
 reduceNode n0@IOContNode {} n1@Bind0BNode {} = reduceNode n1 n0
-reduceNode (Bind0BNode _ r0) (PArgumentNode _ r1 r2) = do
-    rn3 <- newNode $ PArgumentNode () () ()
+reduceNode (Bind0BNode _ r0) (PArgumentNode (Just t) _ r1 r2) = do
+    rn3 <- newNode $ PArgumentNode (Just t) () () ()
     linkNodes r1 $ Ref rn3 1
     linkNodes r2 $ Ref rn3 2
-    reassocCont r0 $ Ref rn3 0
+    reassocCont t r0 $ Ref rn3 0
 reduceNode n0@PArgumentNode {} n1@Bind0BNode {} = reduceNode n1 n0
 reduceNode (Bind0CNode _ r0 r1) (IOPureNode _ r2) = do
     rn3 <- newNode $ AppNode () () ()
@@ -549,13 +568,8 @@ reduceNode (Bind0CNode _ r0 r1) (IOPureNode _ r2) = do
     linkNodes r2 $ Ref rn3 0
 reduceNode n0@IOPureNode {} n1@Bind0CNode {} = reduceNode n1 n0
 reduceNode (Bind0FNode name _ r0 r1) (IOContNode instr _) = do
-    let op = B.Reference (B.instrType instr) name
     rn2 <- newNode $ Bind1FNode (name B.:= instr) () ()
-    rn3 <- newNode $ AppNode () () ()
-    rn4 <- newNode $ OperandNode op ()
-    linkNodes (Ref rn2 1) (Ref rn3 2)
-    linkNodes (Ref rn3 1) (Ref rn4 0)
-    linkNodes r0 $ Ref rn3 0
+    linkNodes r0 $ Ref rn2 1
     linkNodes r1 $ Ref rn2 0
 reduceNode n0@IOContNode {} n1@Bind0FNode {} = reduceNode n1 n0
 reduceNode (Branch0FNode _ r0 r1 r2) (OperandNode op _) = mkBranch1 op r0 r1 r2
@@ -572,24 +586,67 @@ reduceNode n0@NamedBlockNode {} n1@Merge0Node {} = reduceNode n1 n0
 reduceNode (Merge1Node nbs0 _ r0) (NamedBlockNode nbs1 _)
     = propagate1 r0 $ NamedBlockNode $ nbs0 <> nbs1
 reduceNode n0@NamedBlockNode {} n1@Merge1Node {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (OperandNode op _)
+reduceNode (TBuild1Node lvl t namep _ r0 r1) (LamNode _ r2 r3) = do
+    rn4 <- newNode $ TBuild1Node lvl t namep () () ()
+    rn5 <- newNode $ LamNode () () ()
+    linkNodes (Ref rn4 2) (Ref rn5 2)
+    linkNodes r0 $ Ref rn4 1
+    linkNodes r1 $ Ref rn5 0
+    linkNodes r2 $ Ref rn5 1
+    linkNodes r3 $ Ref rn4 0
+reduceNode n0@LamNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl t namep _ r0 r1 r2) (LamNode _ r3 r4) = do
+    rn5 <- newNode $ TBuild2Node lvl t namep () () () ()
+    rn6 <- newNode $ LamNode () () ()
+    linkNodes (Ref rn5 3) (Ref rn6 2)
+    linkNodes r0 $ Ref rn5 1
+    linkNodes r1 $ Ref rn5 2
+    linkNodes r2 $ Ref rn6 0
+    linkNodes r3 $ Ref rn6 1
+    linkNodes r4 $ Ref rn5 0
+reduceNode n0@LamNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (OperandNode op _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 (OperandNode op)
+reduceNode n0@OperandNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (OperandNode op _)
     = propagate2 r0 r1 TCloseNode *> propagate1 r2 (OperandNode op)
-reduceNode n0@OperandNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (OperandANode opp _)
+reduceNode n0@OperandNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (OperandANode opp _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 (OperandANode opp)
+reduceNode n0@OperandANode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (OperandANode opp _)
     = propagate2 r0 r1 TCloseNode *> propagate1 r2 (OperandANode opp)
-reduceNode n0@OperandANode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (IONode bs _) = do
-    propagate2 r0 r1 TCloseNode
-    propagate1 r2 $ IONode bs
-reduceNode n0@IONode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (IOANode iop _)
-    = propagate2 r0 r1 TCloseNode *> propagate1 r2 (IOANode iop)
-reduceNode n0@IOANode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (IOContNode instr _)
+reduceNode n0@OperandANode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (IONode bs _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 (IONode bs)
+reduceNode n0@IONode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (IONode bs _)
+    = propagate2 r0 r1 TCloseNode *> propagate1 r2 (IONode bs)
+reduceNode n0@IONode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (IOANode t iop _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 (IOANode t iop)
+reduceNode n0@IOANode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (IOANode t iop _)
+    = propagate2 r0 r1 TCloseNode *> propagate1 r2 (IOANode t iop)
+reduceNode n0@IOANode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (IOContNode instr _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 (IOContNode instr)
+reduceNode n0@IOContNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (IOContNode instr _)
     = propagate2 r0 r1 TCloseNode *> propagate1 r2 (IOContNode instr)
-reduceNode n0@IOContNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (ReturnCNode _ r3) = do
-    rn4 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
+reduceNode n0@IOContNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (ReturnCNode _ r2) = do
+    rn3 <- newNode $ TBuild1Node lvl BuildOperand namep () () ()
+    rn4 <- newNode $ ReturnFNode () ()
+    rn5 <- newNode $ PReduceNode () ()
+    linkNodes (Ref rn3 2) (Ref rn5 0)
+    linkNodes (Ref rn4 0) (Ref rn5 1)
+    linkNodes r0 $ Ref rn3 1
+    linkNodes r1 $ Ref rn4 1
+    linkNodes r2 $ Ref rn3 0
+reduceNode n0@ReturnCNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (ReturnCNode _ r3) = do
+    rn4 <- newNode $ TBuild2Node lvl BuildOperand namep () () () ()
     rn5 <- newNode $ ReturnFNode () ()
     rn6 <- newNode $ PReduceNode () ()
     linkNodes (Ref rn4 3) (Ref rn6 0)
@@ -598,11 +655,26 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (ReturnCNode _ r3) = do
     linkNodes r1 $ Ref rn4 2
     linkNodes r2 $ Ref rn5 1
     linkNodes r3 $ Ref rn4 0
-reduceNode n0@ReturnCNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Bind1CNode _ r3 r4) = do
-    name <- newName
-    rn5 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
-    rn6 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
+reduceNode n0@ReturnCNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (Bind1CNode name _ r2 r3) = do
+    rn4 <- newNode $ TBuild1Node lvl BuildOperand namep () () ()
+    rn5 <- newNode $ TBuild1Node lvl BuildIO namep () () ()
+    rn6 <- newNode $ Bind0FNode name () () ()
+    rn7 <- newNode $ TSplitNode () () ()
+    rn8 <- newNode $ PReduceNode () ()
+    linkNodes (Ref rn4 1) (Ref rn7 1)
+    linkNodes (Ref rn4 2) (Ref rn8 0)
+    linkNodes (Ref rn5 1) (Ref rn7 2)
+    linkNodes (Ref rn5 2) (Ref rn6 1)
+    linkNodes (Ref rn6 0) (Ref rn8 1)
+    linkNodes r0 $ Ref rn7 0
+    linkNodes r1 $ Ref rn6 2
+    linkNodes r2 $ Ref rn4 0
+    linkNodes r3 $ Ref rn5 0
+reduceNode n0@Bind1CNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (Bind1CNode name _ r3 r4) = do
+    rn5 <- newNode $ TBuild2Node lvl BuildOperand namep () () () ()
+    rn6 <- newNode $ TBuild2Node lvl BuildIO namep () () () ()
     rn7 <- newNode $ Bind0FNode name () () ()
     rn8 <- newNode $ TSplitNode () () ()
     rn9 <- newNode $ TSplitNode () () ()
@@ -612,27 +684,55 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Bind1CNode _ r3 r4) = do
     linkNodes (Ref rn5 3) (Ref rn10 0)
     linkNodes (Ref rn6 1) (Ref rn8 2)
     linkNodes (Ref rn6 2) (Ref rn9 2)
-    linkNodes (Ref rn6 0) (Ref rn7 2)
+    linkNodes (Ref rn6 3) (Ref rn7 1)
     linkNodes (Ref rn7 0) (Ref rn10 1)
     linkNodes r0 $ Ref rn8 0
     linkNodes r1 $ Ref rn9 0
-    linkNodes r2 $ Ref rn6 3
+    linkNodes r2 $ Ref rn7 2
     linkNodes r3 $ Ref rn5 0
-    linkNodes r4 $ Ref rn7 1
-reduceNode n0@Bind1CNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Bind1FNode instr _ r3) = do
-    rn4 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
+    linkNodes r4 $ Ref rn6 0
+reduceNode n0@Bind1CNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (Bind1FNode instr _ r2) = do
+    rn3 <- newNode $ TBuild1Node lvl BuildIO namep () () ()
+    rn4 <- newNode $ Bind1FNode instr () ()
+    linkNodes (Ref rn3 2) (Ref rn4 1)
+    linkNodes r0 $ Ref rn3 1
+    linkNodes r1 $ Ref rn4 0
+    linkNodes r2 $ Ref rn3 0
+reduceNode n0@Bind1FNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (Bind1FNode instr _ r3) = do
+    rn4 <- newNode $ TBuild2Node lvl BuildIO namep () () () ()
     rn5 <- newNode $ Bind1FNode instr () ()
     linkNodes (Ref rn4 3) (Ref rn5 1)
     linkNodes r0 $ Ref rn4 1
     linkNodes r1 $ Ref rn4 2
     linkNodes r2 $ Ref rn5 0
     linkNodes r3 $ Ref rn4 0
-reduceNode n0@Bind1FNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Branch0CNode _ r3 r4 r5) = do
-    rn6 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
-    rn7 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
-    rn8 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
+reduceNode n0@Bind1FNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (Branch0CNode _ r2 r3 r4) = do
+    rn5 <- newNode $ TBuild1Node lvl BuildOperand namep () () ()
+    rn6 <- newNode $ TBuild1Node lvl BuildIO namep () () ()
+    rn7 <- newNode $ TBuild1Node lvl BuildIO namep () () ()
+    rn8 <- newNode $ Branch0CNode () () () ()
+    rn9 <- newNode $ TSplitNode () () ()
+    rn10 <- newNode $ TSplitNode () () ()
+    linkNodes (Ref rn5 1) (Ref rn9 1)
+    linkNodes (Ref rn5 2) (Ref rn8 1)
+    linkNodes (Ref rn6 1) (Ref rn10 1)
+    linkNodes (Ref rn6 2) (Ref rn8 2)
+    linkNodes (Ref rn7 1) (Ref rn10 2)
+    linkNodes (Ref rn7 2) (Ref rn8 3)
+    linkNodes (Ref rn9 2) (Ref rn10 0)
+    linkNodes r0 $ Ref rn9 0
+    linkNodes r1 $ Ref rn8 0
+    linkNodes r2 $ Ref rn5 0
+    linkNodes r3 $ Ref rn6 0
+    linkNodes r4 $ Ref rn7 0
+reduceNode n0@Branch0CNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (Branch0CNode _ r3 r4 r5) = do
+    rn6 <- newNode $ TBuild2Node lvl BuildOperand namep () () () ()
+    rn7 <- newNode $ TBuild2Node lvl BuildIO namep () () () ()
+    rn8 <- newNode $ TBuild2Node lvl BuildIO namep () () () ()
     rn9 <- newNode $ Branch0CNode () () () ()
     rn10 <- newNode $ TSplitNode () () ()
     rn11 <- newNode $ TSplitNode () () ()
@@ -655,11 +755,25 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (Branch0CNode _ r3 r4 r5) = do
     linkNodes r3 $ Ref rn6 0
     linkNodes r4 $ Ref rn7 0
     linkNodes r5 $ Ref rn8 0
-reduceNode n0@Branch0CNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (PArgumentNode _ r3 r4) = do
-    rn5 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
-    rn6 <- newNode $ TBuildNode lvl BuildOperand namep () () () ()
-    rn7 <- newNode $ PArgumentNode () () ()
+reduceNode n0@Branch0CNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (PArgumentNode t _ r2 r3) = do
+    rn4 <- newNode $ TBuild1Node lvl BuildOperand namep () () ()
+    rn5 <- newNode $ TBuild1Node lvl BuildOperand namep () () ()
+    rn6 <- newNode $ PArgumentNode t () () ()
+    rn7 <- newNode $ TSplitNode () () ()
+    linkNodes (Ref rn4 1) (Ref rn7 1)
+    linkNodes (Ref rn4 2) (Ref rn6 1)
+    linkNodes (Ref rn5 1) (Ref rn7 2)
+    linkNodes (Ref rn5 2) (Ref rn6 2)
+    linkNodes r0 $ Ref rn7 0
+    linkNodes r1 $ Ref rn6 0
+    linkNodes r2 $ Ref rn4 0
+    linkNodes r3 $ Ref rn5 0
+reduceNode n0@PArgumentNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (PArgumentNode t _ r3 r4) = do
+    rn5 <- newNode $ TBuild2Node lvl BuildOperand namep () () () ()
+    rn6 <- newNode $ TBuild2Node lvl BuildOperand namep () () () ()
+    rn7 <- newNode $ PArgumentNode t () () ()
     rn8 <- newNode $ TSplitNode () () ()
     rn9 <- newNode $ TSplitNode () () ()
     linkNodes (Ref rn5 1) (Ref rn8 1)
@@ -673,47 +787,82 @@ reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (PArgumentNode _ r3 r4) = do
     linkNodes r2 $ Ref rn7 0
     linkNodes r3 $ Ref rn5 0
     linkNodes r4 $ Ref rn6 0
-reduceNode n0@PArgumentNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (AccumIONode ib _ r0) (TEntryNode name opp _ r1) = do
-    let term = B.TailCall name opp
-    propagate1 r0 $ IONode $ B.BlockList (B.Block (B.unIBlock ib) term) mempty
+reduceNode n0@PArgumentNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (AccumIONode ib _ r0) (TEntryNode _ r1 r2) = do
+    rn3 <- newNode $ AccumIONode ib () ()
+    linkNodes r0 $ Ref rn3 1
     propagate1 r1 TCloseNode
+    linkNodes r2 $ Ref rn3 0
 reduceNode n0@TEntryNode {} n1@AccumIONode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl _ namep _ r0 r1 r2) (TEntryNode name opp _ r3) = do
-    let term = B.TailCall name opp
-    rn4 <- newNode $ TCrossNode lvl namep () () ()
-    propagate1 r2 $ IONode $ B.BlockList (B.Block mempty term) mempty
+reduceNode (TBuild1Node lvl _ namep _ r0 r1) (TEntryNode _ r2 r3) = do
+    rn4 <- newNode $ TCross1Node lvl namep () ()
     linkNodes r0 $ Ref rn4 1
-    linkNodes r1 $ Ref rn4 2
-    linkNodes r3 $ Ref rn4 0
-reduceNode n0@TEntryNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TCrossNode lvl namep _ r0 r1) (TSplitNode _ r2 r3)
-    = commute2 (TCrossNode lvl namep) TSplitNode r0 r1 r2 r3
-reduceNode n0@TSplitNode {} n1@TCrossNode {} = reduceNode n1 n0
-reduceNode (TCrossNode _ _ _ r0 r1) (TCloseNode _) = propagate2 r0 r1 TCloseNode
-reduceNode n0@TCloseNode {} n1@TCrossNode {} = reduceNode n1 n0
+    linkNodes r1 r3
+    linkNodes r2 $ Ref rn4 0
+reduceNode n0@TEntryNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl _ namep _ r0 r1 r2) (TEntryNode _ r3 r4) = do
+    rn5 <- newNode $ TCross2Node lvl namep () () ()
+    linkNodes r0 $ Ref rn5 1
+    linkNodes r1 $ Ref rn5 2
+    linkNodes r2 r4
+    linkNodes r3 $ Ref rn5 0
+reduceNode n0@TEntryNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TSplitNode _ r0 r1) (TCross1Node lvl namep _ r2)
+    = commute1 TSplitNode (TCross1Node lvl namep) r0 r1 r2
+reduceNode n0@TCross1Node {} n1@TSplitNode {} = reduceNode n1 n0
+reduceNode (TCross2Node lvl namep _ r0 r1) (TSplitNode _ r2 r3)
+    = commute2 (TCross2Node lvl namep) TSplitNode r0 r1 r2 r3
+reduceNode n0@TSplitNode {} n1@TCross2Node {} = reduceNode n1 n0
+reduceNode (TCross1Node _ _ _ r0) (TCloseNode _) = propagate1 r0 TCloseNode
+reduceNode n0@TCloseNode {} n1@TCross1Node {} = reduceNode n1 n0
+reduceNode (TCross2Node _ _ _ r0 r1) (TCloseNode _)
+    = propagate2 r0 r1 TCloseNode
+reduceNode n0@TCloseNode {} n1@TCross2Node {} = reduceNode n1 n0
 reduceNode (TSplitNode _ r0 r1) (TCloseNode _) = propagate2 r0 r1 TCloseNode
 reduceNode n0@TCloseNode {} n1@TSplitNode {} = reduceNode n1 n0
 reduceNode (TCloseNode _) (TCloseNode _) = pure ()
-reduceNode (TCrossNode lvl namep _ r0 r1) (TLeaveNode t _ r2 r3) = do
-    rn4 <- newNode $ TBuildNode lvl t namep () () () ()
+reduceNode (TCross1Node lvl namep _ r0) (TLeaveNode t _ r1 r2) = do
+    rn3 <- newNode $ TBuild1Node lvl t namep () () ()
+    linkNodes r0 $ Ref rn3 1
+    linkNodes r1 $ Ref rn3 0
+    linkNodes r2 $ Ref rn3 2
+reduceNode n0@TLeaveNode {} n1@TCross1Node {} = reduceNode n1 n0
+reduceNode (TCross2Node lvl namep _ r0 r1) (TLeaveNode t _ r2 r3) = do
+    rn4 <- newNode $ TBuild2Node lvl t namep () () () ()
     linkNodes r0 $ Ref rn4 1
     linkNodes r1 $ Ref rn4 2
     linkNodes r2 $ Ref rn4 0
     linkNodes r3 $ Ref rn4 3
-reduceNode n0@TLeaveNode {} n1@TCrossNode {} = reduceNode n1 n0
+reduceNode n0@TLeaveNode {} n1@TCross2Node {} = reduceNode n1 n0
 reduceNode (TLeaveNode _ _ r0 r1) (TCloseNode _) = linkNodes r0 r1
 reduceNode n0@TCloseNode {} n1@TLeaveNode {} = reduceNode n1 n0
-reduceNode (TCrossNode lvl0 namep _ r0 r1) (TMatchNode lvl1 _ r2 r3 r4)
+reduceNode (TCross1Node lvl0 namep _ r0) (TMatchNode lvl1 _ r1 r2 r3)
+    | lvl0 == lvl1 = do
+        rn4 <- newNode $ TSplitNode () () ()
+        linkNodes r0 $ Ref rn4 0
+        linkNodes r1 $ Ref rn4 1
+        linkNodes r2 $ Ref rn4 2
+        propagate1 r3 $ OperandNode namep
+    | otherwise = do
+        rn4 <- newNode $ TCross1Node lvl0 namep () ()
+        rn5 <- newNode $ TCross1Node lvl0 namep () ()
+        rn6 <- newNode $ TMatchNode lvl1 () () () ()
+        linkNodes (Ref rn4 1) (Ref rn6 1)
+        linkNodes (Ref rn5 1) (Ref rn6 2)
+        linkNodes r0 $ Ref rn6 0
+        linkNodes r1 $ Ref rn4 0
+        linkNodes r2 $ Ref rn5 0
+        linkNodes r3 $ Ref rn6 3
+reduceNode n0@TMatchNode {} n1@TCross1Node {} = reduceNode n1 n0
+reduceNode (TCross2Node lvl0 namep _ r0 r1) (TMatchNode lvl1 _ r2 r3 r4)
     | lvl0 == lvl1 = do
         linkNodes r0 r2
         linkNodes r1 r3
-        propagate1 r4 $ OperandNode $ B.Reference (B.IntType 1) namep
+        propagate1 r4 $ OperandNode namep
     | otherwise = do
-        let opp = B.Partial (SSucc $ SSucc SZero) $ mkSelect
-                $ B.Reference (B.IntType 1) namep
-        rn5 <- newNode $ TCrossNode lvl0 namep () () ()
-        rn6 <- newNode $ TCrossNode lvl0 namep () () ()
+        let opp = B.Partial (SSucc $ SSucc SZero) $ mkSelect namep
+        rn5 <- newNode $ TCross2Node lvl0 namep () () ()
+        rn6 <- newNode $ TCross2Node lvl0 namep () () ()
         rn7 <- newNode $ TMatchNode lvl1 () () () ()
         rn8 <- newNode $ TMatchNode lvl1 () () () ()
         rn9 <- newNode $ OperandPNode opp () ()
@@ -730,17 +879,22 @@ reduceNode (TCrossNode lvl0 namep _ r0 r1) (TMatchNode lvl1 _ r2 r3 r4)
         linkNodes r2 $ Ref rn5 0
         linkNodes r3 $ Ref rn6 0
         linkNodes r4 $ Ref rn10 2
-reduceNode n0@TMatchNode {} n1@TCrossNode {} = reduceNode n1 n0
-reduceNode (PArgumentNode _ r0 r1) (AppNode _ r2 r3) = do
-    rn4 <- newNode $ PArgumentNode () () ()
-    rn5 <- newNode $ PArgumentNode () () ()
+reduceNode n0@TMatchNode {} n1@TCross2Node {} = reduceNode n1 n0
+reduceNode (TCloseNode _) (TMatchNode _ _ r0 r1 r2)
+    = propagate2 r0 r1 TCloseNode *> propagate1 r2 (OperandNode opUndef)
+  where
+    opUndef = B.Reference (B.IntType 1) $ B.Name $ -1
+reduceNode n0@TMatchNode {} n1@TCloseNode {} = reduceNode n1 n0
+reduceNode (PArgumentNode t _ r0 r1) (AppNode _ r2 r3) = do
+    rn4 <- newNode $ PArgumentNode t () () ()
+    rn5 <- newNode $ PArgumentNode t () () ()
     linkNodes (Ref rn4 0) (Ref rn5 1)
     linkNodes r0 $ Ref rn4 1
     linkNodes r1 $ Ref rn4 2
     linkNodes r2 $ Ref rn5 2
     linkNodes r3 $ Ref rn5 0
 reduceNode n0@AppNode {} n1@PArgumentNode {} = reduceNode n1 n0
-reduceNode (PArgumentNode _ r0 r1) (OperandPNode opp _ r2) = do
+reduceNode (PArgumentNode _ _ r0 r1) (OperandPNode opp _ r2) = do
     rn3 <- newNode $ AppNode () () ()
     rn4 <- newNode $ PReduceNode () ()
     rn5 <- newNode $ PReduceNode () ()
@@ -752,7 +906,7 @@ reduceNode (PArgumentNode _ r0 r1) (OperandPNode opp _ r2) = do
     linkNodes r1 $ Ref rn5 0
     linkNodes r2 $ Ref rn6 1
 reduceNode n0@OperandPNode {} n1@PArgumentNode {} = reduceNode n1 n0
-reduceNode (PArgumentNode _ r0 r1) (IOPNode iop _ r2) = do
+reduceNode (PArgumentNode _ _ r0 r1) (IOPNode iop _ r2) = do
     rn3 <- newNode $ AppNode () () ()
     rn4 <- newNode $ PReduceNode () ()
     rn5 <- newNode $ PReduceNode () ()
@@ -764,7 +918,7 @@ reduceNode (PArgumentNode _ r0 r1) (IOPNode iop _ r2) = do
     linkNodes r1 $ Ref rn5 0
     linkNodes r2 $ Ref rn6 1
 reduceNode n0@IOPNode {} n1@PArgumentNode {} = reduceNode n1 n0
-reduceNode (PArgumentNode _ r0 r1) (PReduceNode _ r2) = do
+reduceNode (PArgumentNode _ _ r0 r1) (PReduceNode _ r2) = do
     rn3 <- newNode $ AppNode () () ()
     rn4 <- newNode $ PReduceNode () ()
     rn5 <- newNode $ PReduceNode () ()
@@ -780,7 +934,7 @@ reduceNode n0@OperandNode {} n1@PReduceNode {} = reduceNode n1 n0
 reduceNode (PReduceNode _ r0) (OperandANode opp _)
     = mkLambda r0 $ OperandPNode opp
 reduceNode n0@OperandANode {} n1@PReduceNode {} = reduceNode n1 n0
-reduceNode (PReduceNode _ r0) (IOANode iop _) = mkLambda r0 $ IOPNode iop
+reduceNode (PReduceNode _ r0) (IOANode _ iop _) = mkLambda r0 $ IOPNode iop
 reduceNode n0@IOANode {} n1@PReduceNode {} = reduceNode n1 n0
 reduceNode (PReduceNode _ r0) (IOContNode instr _)
     = propagate1 r0 $ IOContNode instr
@@ -799,7 +953,8 @@ reduceNode (DupNode lvl _ r0 r1) (IONode bs _) = do
     rn2 <- newNode $ IONode bs ()
     dedupIO lvl r0 r1 $ Ref rn2 0
 reduceNode n0@IONode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode _ _ r0 r1) (IOANode iop _) = propagate2 r0 r1 $ IOANode iop
+reduceNode (DupNode _ _ r0 r1) (IOANode t iop _)
+    = propagate2 r0 r1 $ IOANode t iop
 reduceNode n0@IOANode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (IOPNode iop _ r2)
     = commute1 (DupNode lvl) (IOPNode iop) r0 r1 r2
@@ -815,18 +970,29 @@ reduceNode (DupNode lvl _ r0 r1) (ReturnCNode _ r2) = do
     linkNodes r2 $ Ref rn3 1
     dedupIO lvl r0 r1 $ Ref rn3 0
 reduceNode n0@ReturnCNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupIONode lvl _ r0 r1) (ReturnCNode _ r2) = do
+    rn3 <- newNode $ ReturnCNode () ()
+    linkNodes r2 $ Ref rn3 1
+    dedupIO' lvl r0 r1 $ Ref rn3 0
+reduceNode n0@ReturnCNode {} n1@DupIONode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Bind0BNode _ r2)
     = commute1 (DupNode lvl) Bind0BNode r0 r1 r2
 reduceNode n0@Bind0BNode {} n1@DupNode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Bind0CNode _ r2 r3)
     = commute2 (DupNode lvl) Bind0CNode r0 r1 r2 r3
 reduceNode n0@Bind0CNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (Bind1CNode _ r2 r3) = do
-    rn4 <- newNode $ Bind1CNode () () ()
+reduceNode (DupNode lvl _ r0 r1) (Bind1CNode name _ r2 r3) = do
+    rn4 <- newNode $ Bind1CNode name () () ()
     linkNodes r2 $ Ref rn4 1
     linkNodes r3 $ Ref rn4 2
     dedupIO lvl r0 r1 $ Ref rn4 0
 reduceNode n0@Bind1CNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupIONode lvl _ r0 r1) (Bind1CNode name _ r2 r3) = do
+    rn4 <- newNode $ Bind1CNode name () () ()
+    linkNodes r2 $ Ref rn4 1
+    linkNodes r3 $ Ref rn4 2
+    dedupIO' lvl r0 r1 $ Ref rn4 0
+reduceNode n0@Bind1CNode {} n1@DupIONode {} = reduceNode n1 n0
 reduceNode (DupNode lvl _ r0 r1) (Branch0CNode _ r2 r3 r4) = do
     rn5 <- newNode $ Branch0CNode () () () ()
     linkNodes r2 $ Ref rn5 1
@@ -834,9 +1000,56 @@ reduceNode (DupNode lvl _ r0 r1) (Branch0CNode _ r2 r3 r4) = do
     linkNodes r4 $ Ref rn5 3
     dedupIO lvl r0 r1 $ Ref rn5 0
 reduceNode n0@Branch0CNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
+reduceNode (DupNode lvl0 _ r0 r1) (TBuild1Node lvl1 t opp _ r2 r3)
     | lvl0 == lvl1 = do
-        let opp = B.Reference (B.IntType 1) namep
+        rn4 <- newNode $ TSplitNode () () ()
+        rn5 <- newNode $ TLeaveNode t () () ()
+        rn6 <- newNode $ TLeaveNode t () () ()
+        linkNodes (Ref rn4 1) (Ref rn5 0)
+        linkNodes (Ref rn4 2) (Ref rn6 0)
+        linkNodes r0 $ Ref rn5 1
+        linkNodes r1 $ Ref rn6 1
+        linkNodes r2 $ Ref rn4 0
+        case t of
+            BuildOperand -> do
+                let opp' = B.Partial (SSucc $ SSucc SZero) $ mkSelect opp
+                rn7 <- newNode $ OperandPNode opp' () ()
+                rn8 <- newNode $ AppNode () () ()
+                linkNodes (Ref rn5 2) (Ref rn7 0)
+                linkNodes (Ref rn6 2) (Ref rn8 1)
+                linkNodes (Ref rn7 1) (Ref rn8 0)
+                linkNodes r3 $ Ref rn8 2
+            BuildIO -> mkBranch1 opp (Ref rn5 2) (Ref rn6 2) r3
+    | otherwise = do
+        rn4 <- newNode $ TMatchNode lvl0 () () () ()
+        rn5 <- newNode $ TBuild1Node lvl1 t opp () () ()
+        rn6 <- newNode $ TBuild1Node lvl1 t opp () () ()
+        linkNodes (Ref rn4 1) (Ref rn5 1)
+        linkNodes (Ref rn4 2) (Ref rn6 1)
+        linkNodes r0 $ Ref rn5 0
+        linkNodes r1 $ Ref rn6 0
+        linkNodes r2 $ Ref rn4 0
+        case t of
+            BuildOperand -> do
+                let opp' = B.Partial (SSucc $ SSucc $ SSucc SZero) mkSelect
+                rn7 <- newNode $ OperandPNode opp' () ()
+                rn8 <- newNode $ AppNode () () ()
+                rn9 <- newNode $ AppNode () () ()
+                linkNodes (Ref rn7 0) (Ref rn4 3)
+                linkNodes (Ref rn7 1) (Ref rn8 0)
+                linkNodes (Ref rn8 1) (Ref rn5 2)
+                linkNodes (Ref rn8 2) (Ref rn9 0)
+                linkNodes (Ref rn9 1) (Ref rn6 2)
+                linkNodes r3 $ Ref rn9 2
+            BuildIO -> do
+                rn7 <- newNode $ Branch0CNode () () () ()
+                linkNodes (Ref rn4 3) (Ref rn7 1)
+                linkNodes (Ref rn5 2) (Ref rn7 2)
+                linkNodes (Ref rn6 2) (Ref rn7 3)
+                linkNodes r3 $ Ref rn7 0
+reduceNode n0@TBuild1Node {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode lvl0 _ r0 r1) (TBuild2Node lvl1 t opp _ r2 r3 r4)
+    | lvl0 == lvl1 = do
         rn5 <- newNode $ TLeaveNode t () () ()
         rn6 <- newNode $ TLeaveNode t () () ()
         linkNodes r0 $ Ref rn5 1
@@ -854,14 +1067,13 @@ reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
                 linkNodes r4 $ Ref rn8 2
             BuildIO -> mkBranch1 opp (Ref rn5 2) (Ref rn6 2) r4
     | otherwise = do
-        let opp = B.Partial (SSucc $ SSucc SZero)
-                $ mkSelect $ B.Reference (B.IntType 1) namep
-        rn3 <- newNode $ OperandPNode opp () ()
+        let opp' = B.Partial (SSucc $ SSucc SZero) $ mkSelect opp
+        rn3 <- newNode $ OperandPNode opp' () ()
         rn4 <- newNode $ AppNode () () ()
         rn5 <- newNode $ TMatchNode lvl0 () () () ()
         rn6 <- newNode $ TMatchNode lvl0 () () () ()
-        rn7 <- newNode $ TBuildNode lvl1 t namep () () () ()
-        rn8 <- newNode $ TBuildNode lvl1 t namep () () () ()
+        rn7 <- newNode $ TBuild2Node lvl1 t opp () () () ()
+        rn8 <- newNode $ TBuild2Node lvl1 t opp () () () ()
         linkNodes (Ref rn3 0) (Ref rn5 3)
         linkNodes (Ref rn3 1) (Ref rn4 0)
         linkNodes (Ref rn4 1) (Ref rn6 3)
@@ -875,8 +1087,8 @@ reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
         linkNodes r3 $ Ref rn6 0
         case t of
             BuildOperand -> do
-                let opp' = B.Partial (SSucc $ SSucc $ SSucc SZero) mkSelect
-                rn2 <- newNode $ OperandPNode opp' () ()
+                let opp'' = B.Partial (SSucc $ SSucc $ SSucc SZero) mkSelect
+                rn2 <- newNode $ OperandPNode opp'' () ()
                 rn9 <- newNode $ AppNode () () ()
                 rn10 <- newNode $ AppNode () () ()
                 linkNodes (Ref rn2 0) (Ref rn4 2)
@@ -891,35 +1103,60 @@ reduceNode (DupNode lvl0 _ r0 r1) (TBuildNode lvl1 t namep _ r2 r3 r4)
                 linkNodes (Ref rn2 2) (Ref rn7 3)
                 linkNodes (Ref rn2 3) (Ref rn8 3)
                 linkNodes r4 $ Ref rn2 0
-reduceNode n0@TBuildNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (TEntryNode name opp _ r2) = do
-    rn3 <- newNode $ TEntryNode name opp () ()
-    linkNodes r2 $ Ref rn3 1
-    dedupIO lvl r0 r1 $ Ref rn3 0
+reduceNode n0@TBuild2Node {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode lvl _ r0 r1) (TEntryNode _ r2 r3) = do
+    rn4 <- newNode $ TEntryNode () () ()
+    linkNodes r2 $ Ref rn4 1
+    linkNodes r3 $ Ref rn4 2
+    dedupIO lvl r0 r1 $ Ref rn4 0
 reduceNode n0@TEntryNode {} n1@DupNode {} = reduceNode n1 n0
-reduceNode (DupNode lvl _ r0 r1) (PArgumentNode _ r2 r3)
-    = commute2 (DupNode lvl) PArgumentNode r0 r1 r2 r3
+reduceNode (DupIONode lvl _ r0 r1) (TEntryNode _ r2 r3) = do
+    rn4 <- newNode $ TEntryNode () () ()
+    linkNodes r2 $ Ref rn4 1
+    linkNodes r3 $ Ref rn4 2
+    dedupIO' lvl r0 r1 $ Ref rn4 0
+reduceNode n0@TEntryNode {} n1@DupIONode {} = reduceNode n1 n0
+reduceNode (DupNode lvl _ r0 r1) (PArgumentNode t _ r2 r3)
+    = commute2 (DupNode lvl) (PArgumentNode t) r0 r1 r2 r3
 reduceNode n0@PArgumentNode {} n1@DupNode {} = reduceNode n1 n0
+reduceNode (DupNode lvl0 _ r0 r1) (DupIONode lvl1 _ r2 r3)
+    | lvl0 == lvl1 = do
+        rn4 <- newNode $ DupNode lvl0 () () ()
+        linkNodes r0 $ Ref rn4 1
+        linkNodes r1 $ Ref rn4 2
+        dedupIO' lvl1 r2 r3 $ Ref rn4 0
+    | otherwise = commute2 (DupNode lvl0) (DupIONode lvl1) r0 r1 r2 r3
+reduceNode n0@DupIONode {} n1@DupNode {} = reduceNode n1 n0
 -- FFI Dead
 reduceNode (AccumIONode ib _ r0) (DeadNode _) = propagate1 r0
     $ IONode $ B.BlockList (B.Block (B.unIBlock ib) B.Unreachable) mempty
 reduceNode n0@DeadNode {} n1@AccumIONode {} = reduceNode n1 n0
 reduceNode (OperandNode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@OperandNode {} = reduceNode n1 n0
+reduceNode (OperandANode _ _) (DeadNode _) = pure ()
+reduceNode n0@DeadNode {} n1@OperandANode {} = reduceNode n1 n0
 reduceNode (OperandPNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@OperandPNode {} = reduceNode n1 n0
 reduceNode (IONode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@IONode {} = reduceNode n1 n0
+reduceNode (IOANode _ _ _) (DeadNode _) = pure ()
+reduceNode n0@DeadNode {} n1@IOANode {} = reduceNode n1 n0
 reduceNode (IOPNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@IOPNode {} = reduceNode n1 n0
 reduceNode (IOPureNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@IOPureNode {} = reduceNode n1 n0
 reduceNode (IOContNode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@IOContNode {} = reduceNode n1 n0
+reduceNode (TailCallNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
+reduceNode n0@DeadNode {} n1@TailCallNode {} = reduceNode n1 n0
 reduceNode (Bind0BNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind0BNode {} = reduceNode n1 n0
 reduceNode (Bind0CNode _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
 reduceNode n0@DeadNode {} n1@Bind0CNode {} = reduceNode n1 n0
+reduceNode (Bind0FNode _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode n0@DeadNode {} n1@Bind0FNode {} = reduceNode n1 n0
+reduceNode (Bind1CNode _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode n0@DeadNode {} n1@Bind1CNode {} = reduceNode n1 n0
 reduceNode (Bind1FNode _ _ r0) (DeadNode _) = propagate1 r0 DeadNode
 reduceNode n0@DeadNode {} n1@Bind1FNode {} = reduceNode n1 n0
 reduceNode (LabelNode lbl _ r0) (DeadNode _)
@@ -928,11 +1165,21 @@ reduceNode (LabelNode lbl _ r0) (DeadNode _)
 reduceNode n0@DeadNode {} n1@LabelNode {} = reduceNode n1 n0
 reduceNode (NamedBlockNode _ _) (DeadNode _) = pure ()
 reduceNode n0@DeadNode {} n1@NamedBlockNode {} = reduceNode n1 n0
-reduceNode (TBuildNode _ _ _ _ r0 r1 r2) (DeadNode _)
+reduceNode (TBuild1Node _ _ _ _ r0 r1) (DeadNode _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 DeadNode
+reduceNode n0@DeadNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node _ _ _ _ r0 r1 r2) (DeadNode _)
     = propagate2 r0 r1 TCloseNode *> propagate1 r2 DeadNode
-reduceNode n0@DeadNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TEntryNode _ _ _ r0) (DeadNode _) = propagate1 r0 TCloseNode
+reduceNode n0@DeadNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TEntryNode _ r0 r1) (DeadNode _)
+    = propagate1 r0 TCloseNode *> propagate1 r1 DeadNode
 reduceNode n0@DeadNode {} n1@TEntryNode {} = reduceNode n1 n0
+reduceNode (PArgumentNode _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode n0@DeadNode {} n1@PArgumentNode {} = reduceNode n1 n0
+reduceNode (PReduceNode _ r0) (DeadNode _) = propagate1 r0 DeadNode
+reduceNode n0@DeadNode {} n1@PReduceNode {} = reduceNode n1 n0
+reduceNode (DupIONode _ _ r0 r1) (DeadNode _) = propagate2 r0 r1 DeadNode
+reduceNode n0@DeadNode {} n1@DupIONode {} = reduceNode n1 n0
 -- FFI Book-keeping
 reduceNode (AccumIONode ib _ r0) (BoxNode _ _ r1) = do
     rn2 <- newNode $ AccumIONode ib () ()
@@ -949,7 +1196,7 @@ reduceNode (OperandPNode opp _ r0) (BoxNode lvl _ r1)
 reduceNode n0@BoxNode {} n1@OperandPNode {} = reduceNode n1 n0
 reduceNode (IONode b _) (BoxNode _ _ r0) = propagate1 r0 $ IONode b
 reduceNode n0@BoxNode {} n1@IONode {} = reduceNode n1 n0
-reduceNode (IOANode iop _) (BoxNode _ _ r0) = propagate1 r0 $ IOANode iop
+reduceNode (IOANode t iop _) (BoxNode _ _ r0) = propagate1 r0 $ IOANode t iop
 reduceNode n0@BoxNode {} n1@IOANode {} = reduceNode n1 n0
 reduceNode (IOPNode iop _ r0) (BoxNode lvl _ r1)
     = commute0 (IOPNode iop) (BoxNode lvl) r0 r1
@@ -966,6 +1213,9 @@ reduceNode n0@BoxNode {} n1@ReturnCNode {} = reduceNode n1 n0
 reduceNode (ReturnFNode _ r0) (BoxNode lvl _ r1)
     = commute0 ReturnFNode (BoxNode lvl) r0 r1
 reduceNode n0@BoxNode {} n1@ReturnFNode {} = reduceNode n1 n0
+reduceNode (TailCallNode name _ r0) (BoxNode lvl _ r1)
+    = commute0 (TailCallNode name) (BoxNode lvl) r0 r1
+reduceNode n0@BoxNode {} n1@TailCallNode {} = reduceNode n1 n0
 reduceNode (Bind0BNode _ r0) (BoxNode lvl _ r1)
     = commute0 Bind0BNode (BoxNode lvl) r0 r1
 reduceNode n0@BoxNode {} n1@Bind0BNode {} = reduceNode n1 n0
@@ -975,8 +1225,8 @@ reduceNode n0@BoxNode {} n1@Bind0CNode {} = reduceNode n1 n0
 reduceNode (Bind0FNode name _ r0 r1) (BoxNode lvl _ r2)
     = commute1 (Bind0FNode name) (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@Bind0FNode {} = reduceNode n1 n0
-reduceNode (Bind1CNode _ r0 r1) (BoxNode lvl _ r2)
-    = commute1 Bind1CNode (BoxNode lvl) r0 r1 r2
+reduceNode (Bind1CNode name _ r0 r1) (BoxNode lvl _ r2)
+    = commute1 (Bind1CNode name) (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@Bind1CNode {} = reduceNode n1 n0
 reduceNode (Bind1FNode nbs _ r0) (BoxNode lvl _ r1)
     = commute0 (Bind1FNode nbs) (BoxNode lvl) r0 r1
@@ -993,9 +1243,18 @@ reduceNode (LabelNode lbl _ r0) (BoxNode _ _ r1)
     linkNodes r0 $ Ref rn2 1
     linkNodes r1 $ Ref rn2 0
 reduceNode n0@BoxNode {} n1@LabelNode {} = reduceNode n1 n0
-reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3) = do
+reduceNode (TBuild1Node lvl0 t namep _ r0 r1) (BoxNode lvl1 _ r2) = do
     let lvl0' = if lvl0 < lvl1 then lvl0 else succ lvl0
-    rn4 <- newNode $ TBuildNode lvl0' t namep () () () ()
+    rn3 <- newNode $ TBuild1Node lvl0' t namep () () ()
+    rn4 <- newNode $ BoxNode lvl1 () ()
+    linkNodes (Ref rn3 1) (Ref rn4 1)
+    linkNodes r0 $ Ref rn4 0
+    linkNodes r1 $ Ref rn3 2
+    linkNodes r2 $ Ref rn3 0
+reduceNode n0@BoxNode {} n1@TBuild1Node {} = reduceNode n1 n0
+reduceNode (TBuild2Node lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3) = do
+    let lvl0' = if lvl0 < lvl1 then lvl0 else succ lvl0
+    rn4 <- newNode $ TBuild2Node lvl0' t namep () () () ()
     rn5 <- newNode $ BoxNode lvl1 () ()
     rn6 <- newNode $ BoxNode lvl1 () ()
     linkNodes (Ref rn4 1) (Ref rn5 1)
@@ -1004,14 +1263,19 @@ reduceNode (TBuildNode lvl0 t namep _ r0 r1 r2) (BoxNode lvl1 _ r3) = do
     linkNodes r1 $ Ref rn6 0
     linkNodes r2 $ Ref rn4 3
     linkNodes r3 $ Ref rn4 0
-reduceNode n0@BoxNode {} n1@TBuildNode {} = reduceNode n1 n0
-reduceNode (TCrossNode lvl0 namep _ r0 r1) (BoxNode lvl1 _ r2) = commute1
-    (TCrossNode (if lvl0 < lvl1 then lvl0 else succ lvl0) namep)
+reduceNode n0@BoxNode {} n1@TBuild2Node {} = reduceNode n1 n0
+reduceNode (TCross1Node lvl0 namep _ r0) (BoxNode lvl1 _ r1) = commute0
+    (TCross1Node (if lvl0 < lvl1 then lvl0 else succ lvl0) namep)
+    (BoxNode lvl1)
+    r0 r1
+reduceNode n0@BoxNode {} n1@TCross1Node {} = reduceNode n1 n0
+reduceNode (TCross2Node lvl0 namep _ r0 r1) (BoxNode lvl1 _ r2) = commute1
+    (TCross2Node (if lvl0 < lvl1 then lvl0 else succ lvl0) namep)
     (BoxNode lvl1)
     r0 r1 r2
-reduceNode n0@BoxNode {} n1@TCrossNode {} = reduceNode n1 n0
-reduceNode (TEntryNode name opp _ r0) (BoxNode lvl _ r1)
-    = commute0 (TEntryNode name opp) (BoxNode lvl) r0 r1
+reduceNode n0@BoxNode {} n1@TCross2Node {} = reduceNode n1 n0
+reduceNode (TEntryNode _ r0 r1) (BoxNode lvl _ r2)
+    = commute1 TEntryNode (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@TEntryNode {} = reduceNode n1 n0
 reduceNode (TSplitNode _ r0 r1) (BoxNode lvl _ r2)
     = commute1 TSplitNode (BoxNode lvl) r0 r1 r2
@@ -1031,14 +1295,19 @@ reduceNode (TMatchNode lvl0 _ r0 r1 r2) (BoxNode lvl1 _ r3) = commute2b
     (BoxNode lvl1)
     r0 r1 r2 r3
 reduceNode n0@BoxNode {} n1@TMatchNode {} = reduceNode n1 n0
-reduceNode (PArgumentNode _ r0 r1) (BoxNode lvl _ r2)
-    = commute1 PArgumentNode (BoxNode lvl) r0 r1 r2
+reduceNode (PArgumentNode t _ r0 r1) (BoxNode lvl _ r2)
+    = commute1 (PArgumentNode t) (BoxNode lvl) r0 r1 r2
 reduceNode n0@BoxNode {} n1@PArgumentNode {} = reduceNode n1 n0
 reduceNode (PReduceNode _ r0) (BoxNode _ _ r1) = do
     rn2 <- newNode $ PReduceNode () ()
     linkNodes r0 $ Ref rn2 1
     linkNodes r1 $ Ref rn2 0
 reduceNode n0@BoxNode {} n1@PReduceNode {} = reduceNode n1 n0
+reduceNode (DupIONode lvl0 _ r0 r1) (BoxNode lvl1 _ r2) = commute1
+    (DupIONode $ if lvl0 < lvl1 then lvl0 else succ lvl0)
+    (BoxNode lvl1)
+    r0 r1 r2
+reduceNode n0@BoxNode {} n1@DupIONode {} = reduceNode n1 n0
 reduceNode n0 n1 = error . show
     $ "unexpected node pairing" <> line <> pretty n0 <> line <> pretty n1
 {-# INLINABLE reduceNode #-}
@@ -1179,18 +1448,42 @@ dedupIO :: HasRewriter sig m => Level -> Ref -> Ref -> Ref -> m ()
 dedupIO lvl r0 r1 r2 = do
     name <- newName
     namep <- newName
-    rn3 <- newNode $ TEntryNode name (B.Constant B.B1) () ()
-    rn4 <- newNode $ TEntryNode name (B.Constant B.B0) () ()
-    rn5 <- newNode $ TBuildNode lvl BuildIO namep () () () ()
+    let opp = B.Reference (B.IntType 1) namep
+        mk = B.Block mempty . B.TailCall name . B.Constant
+    rn3 <- newNode $ TEntryNode () () ()
+    rn4 <- newNode $ TEntryNode () () ()
+    rn5 <- newNode $ TBuild2Node lvl BuildIO opp () () () ()
     rn6 <- newNode $ AccumIONode mempty () ()
     linkNodes (Ref rn3 1) (Ref rn5 1)
     linkNodes (Ref rn4 1) (Ref rn5 2)
     linkNodes (Ref rn5 3) (Ref rn6 0)
+    propagate1 (Ref rn3 2) $ IONode $ B.BlockList (mk B.B1) mempty
+    propagate1 (Ref rn4 2) $ IONode $ B.BlockList (mk B.B0) mempty
     propagate1 (Ref rn6 1) $ PrivateRootNode name namep
     linkNodes r0 $ Ref rn3 0
     linkNodes r1 $ Ref rn4 0
     linkNodes r2 $ Ref rn5 0
 {-# INLINABLE dedupIO #-}
+
+dedupIO' :: HasRewriter sig m => Level -> Ref -> Ref -> Ref -> m ()
+dedupIO' lvl r0 r1 r2 = do
+    name <- newName
+    namep <- newName
+    let opp = B.Reference (B.IntType 1) namep
+    rn2 <- newNode $ TEntryNode () () ()
+    rn3 <- newNode $ TBuild1Node lvl BuildIO opp () () ()
+    rn4 <- newNode $ AccumIONode mempty () ()
+    rn5 <- newNode $ TailCallNode name () ()
+    rn6 <- newNode $ PReduceNode () ()
+    linkNodes (Ref rn2 1) (Ref rn3 1)
+    linkNodes (Ref rn2 2) (Ref rn5 1)
+    linkNodes (Ref rn3 2) (Ref rn4 0)
+    linkNodes (Ref rn5 0) (Ref rn6 1)
+    propagate1 (Ref rn4 1) $ PrivateRootNode name namep
+    linkNodes r0 $ Ref rn6 0
+    linkNodes r1 $ Ref rn2 0
+    linkNodes r2 $ Ref rn3 0
+{-# INLINABLE dedupIO' #-}
 
 reassocPure :: HasRewriter sig m => Ref -> Ref -> m ()
 reassocPure r0 r1 = do
@@ -1225,12 +1518,13 @@ reassocPure r0 r1 = do
 {-# INLINABLE reassocPure #-}
 
 -- | @r0 = \a -> IOPure (\b -> Bind1C r1 (\c -> Bind0C (a c) b))@
-reassocCont :: HasRewriter sig m => Ref -> Ref -> m ()
-reassocCont r0 r1 = do
+reassocCont :: HasRewriter sig m => B.Type -> Ref -> Ref -> m ()
+reassocCont t r0 r1 = do
+    name <- newName
     rn2 <- newNode $ LamNode () () ()
     rn3 <- newNode $ IOPureNode () ()
     rn4 <- newNode $ LamNode () () ()
-    rn5 <- newNode $ Bind1CNode () () ()
+    rn5 <- newNode $ Bind1CNode name () () ()
     rn6 <- newNode $ BoxNode 0 () ()
     rn7 <- newNode $ BoxNode 0 () ()
     rn8 <- newNode $ LamNode () () ()
@@ -1239,20 +1533,23 @@ reassocCont r0 r1 = do
     rn11 <- newNode $ BoxNode 0 () ()
     rn12 <- newNode $ BoxNode 0 () ()
     rn13 <- newNode $ BoxNode 0 () ()
+    rn14 <- newNode $ AppNode () () ()
     linkNodes (Ref rn2 1) (Ref rn11 0)
     linkNodes (Ref rn2 2) (Ref rn3 0)
     linkNodes (Ref rn3 1) (Ref rn4 0)
     linkNodes (Ref rn4 1) (Ref rn13 0)
     linkNodes (Ref rn4 2) (Ref rn5 0)
     linkNodes (Ref rn5 1) (Ref rn7 1)
-    linkNodes (Ref rn5 2) (Ref rn8 0)
+    linkNodes (Ref rn5 2) (Ref rn14 2)
     linkNodes (Ref rn6 1) (Ref rn7 0)
+    linkNodes (Ref rn8 0) (Ref rn14 0)
     linkNodes (Ref rn8 1) (Ref rn10 1)
     linkNodes (Ref rn8 2) (Ref rn9 2)
     linkNodes (Ref rn9 0) (Ref rn10 2)
     linkNodes (Ref rn9 1) (Ref rn13 1)
     linkNodes (Ref rn10 0) (Ref rn12 1)
     linkNodes (Ref rn11 1) (Ref rn12 0)
+    propagate1 (Ref rn14 1) $ OperandNode $ B.Reference t name
     linkNodes r0 $ Ref rn2 0
     linkNodes r1 $ Ref rn6 0
 {-# INLINABLE reassocCont #-}

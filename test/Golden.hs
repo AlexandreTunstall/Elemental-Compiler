@@ -139,9 +139,9 @@ passes = LLVM.Pass.CuratedPassSetSpec
     , LLVM.Pass.sizeLevel = Nothing
     , LLVM.Pass.unitAtATime = Nothing
     , LLVM.Pass.simplifyLibCalls = Nothing
-    , LLVM.Pass.loopVectorize = Nothing
-    , LLVM.Pass.superwordLevelParallelismVectorize = Nothing
-    , LLVM.Pass.useInlinerWithThreshold = Nothing
+    , LLVM.Pass.loopVectorize = Just True
+    , LLVM.Pass.superwordLevelParallelismVectorize = Just True
+    , LLVM.Pass.useInlinerWithThreshold = Just 65536
     , LLVM.Pass.dataLayout = Nothing
     , LLVM.Pass.targetLibraryInfo = Nothing
     , LLVM.Pass.targetMachine = Nothing
@@ -267,13 +267,14 @@ data NodeHead
     | ExternalRootHead | PrivateRootHead | AccumIOHead | AccumNBHead
     | OperandHead | OperandAHead | OperandPHead
     | IOHead | IOAHead | IOPHead | IOPureHead | IOContHead
-    | ReturnCHead | ReturnFHead
+    | ReturnCHead | ReturnFHead | TailCallHead
     | Bind0BHead | Bind0CHead | Bind0FHead | Bind1CHead | Bind1FHead
     | Branch0CHead | Branch0FHead
     | LabelHead | NamedBlockHead | Merge0Head | Merge1Head
-    | TBuildHead | TCrossHead | TEntryHead | TSplitHead
-    | TCloseHead | TLeaveHead | TMatchHead
+    | TBuild1Head | TBuild2Head | TCross1Head | TCross2Head
+    | TEntryHead | TSplitHead | TCloseHead | TLeaveHead | TMatchHead
     | PArgumentHead | PReduceHead
+    | DupIOHead
     deriving stock (Eq, Ord)
 
 instance Pretty NodeHead where
@@ -296,6 +297,7 @@ instance Pretty NodeHead where
     pretty IOContHead = "IOCont"
     pretty ReturnCHead = "ReturnC"
     pretty ReturnFHead = "ReturnF"
+    pretty TailCallHead = "TailCall"
     pretty Bind0BHead = "Bind0B"
     pretty Bind0CHead = "Bind0C"
     pretty Bind0FHead = "Bind0F"
@@ -307,8 +309,10 @@ instance Pretty NodeHead where
     pretty NamedBlockHead = "NamedBlock"
     pretty Merge0Head = "Merge0"
     pretty Merge1Head = "Merge1"
-    pretty TBuildHead = "TBuild"
-    pretty TCrossHead = "TCross"
+    pretty TBuild1Head = "TBuild1"
+    pretty TBuild2Head = "TBuild2"
+    pretty TCross1Head = "TCross1"
+    pretty TCross2Head = "TCross2"
     pretty TEntryHead = "TEntry"
     pretty TSplitHead = "TSplit"
     pretty TCloseHead = "TClose"
@@ -316,6 +320,7 @@ instance Pretty NodeHead where
     pretty TMatchHead = "TMatch"
     pretty PArgumentHead = "PArgument"
     pretty PReduceHead = "PReduce"
+    pretty DupIOHead = "DupIO"
 
 nodeHead :: INetF a -> NodeHead
 nodeHead x = case x of
@@ -338,6 +343,7 @@ nodeHead x = case x of
     IOContNode {} -> IOContHead
     ReturnCNode {} -> ReturnCHead
     ReturnFNode {} -> ReturnFHead
+    TailCallNode {} -> TailCallHead
     Bind0BNode {} -> Bind0BHead
     Bind0CNode {} -> Bind0CHead
     Bind0FNode {} -> Bind0FHead
@@ -349,8 +355,10 @@ nodeHead x = case x of
     NamedBlockNode {} -> NamedBlockHead
     Merge0Node {} -> Merge0Head
     Merge1Node {} -> Merge1Head
-    TBuildNode {} -> TBuildHead
-    TCrossNode {} -> TCrossHead
+    TBuild1Node {} -> TBuild1Head
+    TBuild2Node {} -> TBuild2Head
+    TCross1Node {} -> TCross1Head
+    TCross2Node {} -> TCross2Head
     TEntryNode {} -> TEntryHead
     TSplitNode {} -> TSplitHead
     TCloseNode {} -> TCloseHead
@@ -358,6 +366,7 @@ nodeHead x = case x of
     TMatchNode {} -> TMatchHead
     PArgumentNode {} -> PArgumentHead
     PReduceNode {} -> PReduceHead
+    DupIONode {} -> DupIOHead
 
 hPutDoc :: Handle -> Doc ann -> IO ()
 hPutDoc h doc = renderIO h $ layoutPretty opts doc
