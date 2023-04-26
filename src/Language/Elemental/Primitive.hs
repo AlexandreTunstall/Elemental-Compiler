@@ -22,6 +22,7 @@ import Language.Elemental.AST.Expr
 import Language.Elemental.AST.Type
 import Language.Elemental.Singleton
 
+
 -- | The types of all primitive expressions.
 type Primitives :: [Type]
 type Primitives =
