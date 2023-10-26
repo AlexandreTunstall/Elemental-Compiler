@@ -1,0 +1,7 @@
+foreign import c_t "t" : IO (∀ 0 → 0)
+foreign import c_f "f" : IO (∀ 0 → 0)
+
+foreign export "main" main : (∀ 0 → 0 → 0) → IO (∀ 0 → 0)
+
+main = λ(∀ 0 → 0 → 0) 0 @(IO (∀ 0 → 0)) c_t c_f
+

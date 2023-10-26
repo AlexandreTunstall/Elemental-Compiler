@@ -18,7 +18,7 @@ module Language.Elemental.TypeCheck
     , unify
     , unify'
     , unifyPtrKind
-    , unifyLlvmType
+    , unifyBackendType
     , unifyNat
     , checkScope
     , checkForeignType
@@ -212,22 +212,23 @@ unify' mismatch ta tb cont = case (ta, tb) of
     (SPointerType tapk tax, SPointerType tbpk tbx)
         -> unifyPtrKind (mismatch ta tb) tapk tbpk
         $ unify' mismatch tax tbx cont
-    (SLlvmType lta, SLlvmType ltb)
-        -> unifyLlvmType (mismatch ta tb) lta ltb cont
+    (SBackendType lta, SBackendType ltb)
+        -> unifyBackendType (mismatch ta tb) lta ltb cont
     _ -> mismatch ta tb
 
 -- | Attempts to unify two pointer kinds, producing a proof if they're equal.
 unifyPtrKind
     :: r -> SPointerKind exp -> SPointerKind act -> (exp ~ act => r) -> r
 unifyPtrKind mismatch apk bpk cont = case (apk, bpk) of
-        (SReadPointer, SReadPointer) -> cont
-        (SWritePointer, SWritePointer) -> cont
-        _ -> mismatch
+    (SReadPointer, SReadPointer) -> cont
+    (SWritePointer, SWritePointer) -> cont
+    _ -> mismatch
 
--- | Attempts to unify two t'LlvmType', producing a proof if they're equal.
-unifyLlvmType :: r -> SLlvmType exp -> SLlvmType act -> (exp ~ act => r) -> r
-unifyLlvmType mismatch lta ltb cont = case (lta, ltb) of
-        (SLlvmInt sizea, SLlvmInt sizeb) -> unifyNat mismatch sizea sizeb cont
+-- | Attempts to unify two t'BackendType', producing a proof if they're equal.
+unifyBackendType
+    :: r -> SBackendType exp -> SBackendType act -> (exp ~ act => r) -> r
+unifyBackendType mismatch lta ltb cont = case (lta, ltb) of
+    (SBackendInt sizea, SBackendInt sizeb) -> unifyNat mismatch sizea sizeb cont
 
 -- | Attempts to unify two natural numbers, producing a proof if they're equal.
 unifyNat :: r -> SNat exp -> SNat act -> (exp ~ act => r) -> r

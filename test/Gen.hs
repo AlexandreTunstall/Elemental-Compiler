@@ -77,7 +77,8 @@ instance Eq SomeType where
         (SIOType tax, SIOType tbx) -> SomeType tax == SomeType tbx
         (SPointerType pka tax, SPointerType pkb tbx)
             -> unifyPtrKind False pka pkb $ SomeType tax == SomeType tbx
-        (SLlvmType lta, SLlvmType ltb) -> unifyLlvmType False lta ltb True
+        (SBackendType lta, SBackendType ltb)
+            -> unifyBackendType False lta ltb True
         _ -> False
 
 genPSubexpr :: MonadGen m => PExpr -> m PExpr
@@ -169,7 +170,7 @@ genTypedExpr tscope scope t = orVar $ case t of
         <$> genTypedExpr (SSucc tscope) (sIncrementAll tscope SZero scope) tx
     SIOType _ -> Gen.discard
     SPointerType _ _ -> Gen.discard
-    SLlvmType _ -> Gen.discard
+    SBackendType _ -> Gen.discard
   where
     orVar :: m (Expr tscope scope t) -> m (Expr tscope scope t)
     orVar m = Gen.choice [m, findVar scope $ pure . Var]
@@ -250,8 +251,9 @@ genMarshallableRetType cont = Gen.choice
     , genMarshallableType cont
     ]
 
-genLlvmType :: forall m r. MonadGen m => (forall lt. SLlvmType lt -> m r) -> m r
-genLlvmType cont = genNat sup $ cont . SLlvmInt
+genBackendType
+    :: forall m r. MonadGen m => (forall lt. SBackendType lt -> m r) -> m r
+genBackendType cont = genNat sup $ cont . SBackendInt
   where
     sup = SSucc $ SSucc $ SSucc $ SSucc $ SSucc $ SSucc $ SSucc $ SSucc SZero
 

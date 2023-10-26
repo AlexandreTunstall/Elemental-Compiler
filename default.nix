@@ -11,6 +11,7 @@ compiler.developPackage {
 
   modifier = drv: pkgs.haskell.lib.compose.addBuildTools [
     pkgs.haskellPackages.cabal-install
+    pkgs.haskell-language-server
     # LLVM CLI tools for local testing purposes.
     pkgs.llvm_9
     # For viewing heap profiles (mainly ps2pdf).

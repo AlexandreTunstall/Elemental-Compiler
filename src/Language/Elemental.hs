@@ -33,6 +33,7 @@ module Language.Elemental
     -- * Emitting
     -- $emitting
     , module Language.Elemental.Emit
+    , module Language.Elemental.InteractionNet
     ) where
 
 import Data.Version (Version)
@@ -45,6 +46,7 @@ import Language.Elemental.AST.Type
 import Language.Elemental.AST.Unchecked
 import Language.Elemental.Diagnostic
 import Language.Elemental.Emit
+import Language.Elemental.InteractionNet
 import Language.Elemental.Location
 import Language.Elemental.Parser
 import Language.Elemental.Pretty
@@ -116,7 +118,11 @@ version = Paths.version
 -}
 
 {- $emitting
-    Programs can be emitted as LLVM using 'emitProgram'.
+    Programs can be emitted as interaction nets using 'emitProgram'. These can
+    then be compiled with 'compileINet'. This will output a generic backend
+    representation, which can finally be converted into LLVM using
+    "Language.Elemental.Backend.LLVM" or into some other target language by
+    manually folding the representation.
 
     The compiler also exposes its other emitting functions, however their
     interface may be more volatile as there's no clear use case for them.

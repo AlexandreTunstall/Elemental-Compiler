@@ -33,13 +33,14 @@ module Language.Elemental.AST.Expr
     , pattern (:@)
     , pattern (:\)
     -- * Marshalling
-    , LlvmOperandType
+    , BackendOperandType
     , IsOpType
     , sIsOpType
     , AllIsOpType
     , sAllIsOpType
     , HasForeignType(..)
     , ForeignType
+    , sForeignType
     , BuildForeignType
     , sBuildForeignType
     , MarshallableType(..)
@@ -53,6 +54,7 @@ module Language.Elemental.AST.Expr
     , exprType
     , IncrementAll
     , sIncrementAll
+    , sIncrementAll'
     , SubstituteAll
     , sSubstituteAll
     , incrementExpr
@@ -76,15 +78,13 @@ module Language.Elemental.AST.Expr
 import Data.Data
 import Data.Kind qualified as Kind
 import Data.Void (absurd)
-import LLVM.AST qualified as LLVM
-import LLVM.AST.Constant qualified as LLVM.Constant
 import Numeric (showHex)
 import Numeric.Natural (Natural)
 import Prettyprinter
 import Unsafe.Coerce qualified as Unsafe
 
-import Control.Effect.IRBuilder
 import Language.Elemental.AST.Type
+import Language.Elemental.Backend qualified as Backend
 import Language.Elemental.Singleton
 
 
@@ -119,15 +119,21 @@ data Expr tscope scope t where
         :: (MarshallableType tx, IsOpType (Marshall tx) ~ 'True)
         => Address -> SPointerKind pk -> SType tscope tx
         -> Expr tscope scope ('PointerType pk tx)
-    -- | A pure LLVM operand. This is an internal expression.
-    LlvmOperand
-        :: SLlvmType lt -> LlvmOperandType lt
-        -> Expr tscope scope ('LlvmType lt)
-    -- | An LLVM operand in @IO@. This is an internal expression.
-    LlvmIO
-        :: SLlvmType lt
-        -> (forall sig m. Has IRBuilder sig m => m (LlvmOperandType lt))
-        -> Expr tscope scope ('IOType ('LlvmType lt))
+    -- | A pure backend operand. This is an internal expression.
+    BackendOperand
+        :: SBackendType lt -> Backend.Operand
+        -> Expr tscope scope ('BackendType lt)
+    -- | An backend operand in @IO@. This is an internal expression.
+    BackendIO
+        :: SBackendType lt
+        -- -> (forall sig m. Has IRBuilder sig m => m (BackendOperandType lt))
+        -> Backend.Instruction
+        -> Expr tscope scope ('IOType ('BackendType lt))
+    -- TODO: Merge with v'Call'.
+    BackendPIO
+        :: SBackendType lta -> SBackendType lt
+        -> (Backend.Operand -> Backend.Instruction)
+        -> Expr tscope scope ('BackendType lta :-> 'IOType ('BackendType lt))
     -- | The @pureIO@ primitive. This is an internal expression.
     PureIO :: Expr tscope scope PureIOType
     -- | The @bindIO@ primitive. This is an internal expression.
@@ -138,21 +144,24 @@ data Expr tscope scope t where
     StorePointer :: Expr tscope scope StorePointerType
     -- | A call of a foreign function. This is an internal expression.
     Call
-        :: AllIsOpType ltargs ~ 'True => LLVM.CallableOperand -> [LLVM.Operand]
-        -> SList SLlvmType ltargs -> SLlvmType ltret
+        :: AllIsOpType ltargs ~ 'True => Backend.ForeignName
+        -> SList SBackendType ltargs -> SBackendType ltret
         -> Expr tscope scope (BuildForeignType ltargs ltret)
     -- | Extracts a single bit from an integer. This is an internal expression.
     IsolateBit
         :: CmpNat idx size ~ 'LT => SNat idx -> SNat size -> Expr tscope scope
-            ('LlvmType ('LlvmInt size) :-> 'LlvmType ('LlvmInt ('Succ 'Zero)))
+            ( 'BackendType ('BackendInt size)
+            :-> 'BackendType ('BackendInt ('Succ 'Zero))
+            )
     -- | Inserts a bit as the MSB of an integer. This is an internal expression.
     InsertBit :: SNat size -> Expr tscope scope
-        ('LlvmType ('LlvmInt ('Succ 'Zero)) :-> 'LlvmType ('LlvmInt size)
-            :-> 'LlvmType ('LlvmInt ('Succ size)))
-    -- | Converts an LLVM @i1@ into a 'BitType'. This is an internal expression.
-    TestBit
-        :: Expr tscope scope ('LlvmType ('LlvmInt ('Succ 'Zero)))
-        -> Expr tscope scope BitType
+        ( 'BackendType ('BackendInt ('Succ 'Zero))
+        :-> 'BackendType ('BackendInt size)
+        :-> 'BackendType ('BackendInt ('Succ size))
+        )
+    -- | Converts an @i1@ into a 'BitType'. This is an internal expression.
+    TestBit :: Expr tscope scope
+        ('BackendType ('BackendInt ('Succ 'Zero)) :-> 'IOType BitType)
 
 -- | Pointer addresses in the AST.
 newtype Address = Address { getAddress :: Natural }
@@ -198,58 +207,81 @@ pattern (:\)
 pattern tx :\ ey = Lam tx ey
 infixr 0 :\
 
--- | Type synonym to convert any t'LlvmType' into its compiler representation.
-type LlvmOperandType :: LlvmType -> Kind.Type
-type LlvmOperandType lt = If (IsOpType lt) LLVM.Operand ()
+-- | Type synonym to convert a t'BackendType' into its compiler representation.
+type BackendOperandType :: BackendType -> Kind.Type
+type BackendOperandType lt = If (IsOpType lt) Backend.Operand ()
 
--- | Is the t'LlvmType' a legal LLVM operand type? Notably, @void@ is not.
-type IsOpType :: LlvmType -> Bool
+-- | Is the t'BackendType' a legal backend operand type? Notably, @i0@ is not.
+type IsOpType :: BackendType -> Bool
 type family IsOpType lt where
-    IsOpType ('LlvmInt size) = SwitchOrd (CmpNat size 'Zero) Stuck 'False 'True
+    IsOpType ('BackendInt size)
+        = SwitchOrd (CmpNat size 'Zero) Stuck 'False 'True
 
 -- | Singleton version of 'IsOpType'.
-sIsOpType :: SLlvmType lt -> SBool (IsOpType lt)
-sIsOpType (SLlvmInt size) = case sCmpNat size SZero of
+sIsOpType :: SBackendType lt -> SBool (IsOpType lt)
+sIsOpType (SBackendInt size) = case sCmpNat size SZero of
     SLT -> absurd $ zeroNoLT size Refl
     SEQ -> SFalse
     SGT -> STrue
 
--- | Is every t'LlvmType' in a list a legal LLVM operand type?
-type AllIsOpType :: [LlvmType] -> Bool
+-- | Is every t'BackendType' in a list a legal backend operand type?
+type AllIsOpType :: [BackendType] -> Bool
 type family AllIsOpType lts where
     AllIsOpType '[] = 'True
     AllIsOpType (lt ': lts) = IsOpType lt && AllIsOpType lts
 
 -- | Singleton version of 'AllIsOpType'.
-sAllIsOpType :: SList SLlvmType lts -> SBool (AllIsOpType lts)
+sAllIsOpType :: SList SBackendType lts -> SBool (AllIsOpType lts)
 sAllIsOpType SNil = STrue
 sAllIsOpType (lt :^ lts) = sIsOpType lt &&^ sAllIsOpType lts
 
 -- | The type has an isomorphic foreign type.
 type HasForeignType :: Type -> Kind.Constraint
 class AllIsOpType (ForeignArgs t) ~ 'True => HasForeignType t where
-    -- | The argument t'LlvmType' of the foreign type.
-    type ForeignArgs t :: [LlvmType]
+    -- | The argument t'BackendType' of the foreign type.
+    type ForeignArgs t :: [BackendType]
 
     -- | Singleton version of 'ForeignArgs'.
-    sForeignArgs :: SType tscope t -> SList SLlvmType (ForeignArgs t)
+    sForeignArgs :: SType tscope t -> SList SBackendType (ForeignArgs t)
 
-    -- | The return t'LlvmType' of the foreign type.
-    type ForeignRet t :: LlvmType
+    -- | The return t'BackendType' of the foreign type.
+    type ForeignRet t :: BackendType
 
     -- | Singleton version of 'ForeignRet'.
-    sForeignRet :: SType tscope t -> SLlvmType (ForeignRet t)
+    sForeignRet :: SType tscope t -> SBackendType (ForeignRet t)
+
+    -- | The return t'Type' of the Elemental type.
+    type InternalRet t :: Type
+
+    -- | Singleton version of 'InternalRet'.
+    sInternalRet :: SType tscope t -> SType tscope (InternalRet t)
 
     -- | Wraps the foreign type into the native type.
     wrapImport
-        :: SNat tscope -> SList (SType tscope) scope
-        -> SType tscope t -> Expr tscope scope (ForeignType t)
-        -> Expr tscope scope t
-    
+        :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
+        -> Expr tscope scope (ForeignType t) -> Expr tscope scope t
+
     -- | Wraps the native type into the foreign type.
     wrapExport
-        :: SNat tscope -> SList (SType tscope) scope
-        -> SType tscope t -> Expr tscope scope t
+        :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
+        -> Expr tscope scope t -> Expr tscope scope (ForeignType t)
+
+    -- | Lifts an IO bind into the foreign type.
+    bindImport
+        :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
+        -> Expr tscope scope ('IOType tx)
+        -> (forall scope'. SList (SType tscope) scope'
+            -> (forall tr. Expr tscope scope tr -> Expr tscope scope' tr)
+            -> Expr tscope scope' tx -> Expr tscope scope' t)
+        -> Expr tscope scope t
+
+    -- | Lifts an IO bind into the foreign type.
+    bindExport
+        :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
+        -> Expr tscope scope ('IOType tx)
+        -> (forall scope'. SList (SType tscope) scope'
+            -> (forall tr. Expr tscope scope tr -> Expr tscope scope' tr)
+            -> Expr tscope scope' tx -> Expr tscope scope' (ForeignType t))
         -> Expr tscope scope (ForeignType t)
 
 instance MarshallableType t => HasForeignType ('IOType t) where
@@ -259,19 +291,41 @@ instance MarshallableType t => HasForeignType ('IOType t) where
     type ForeignRet ('IOType t) = Marshall t
     sForeignRet (SIOType t) = sMarshall t
 
-    wrapImport tscope scope (SIOType t) x = BindIO :@ t' :$ x :@ t :$ (t'
-        :\ PureIO :@ t
-        :$ marshallIn tscope (t' :^ scope) t (Var SZero))
+    type InternalRet ('IOType t) = t
+    sInternalRet (SIOType t) = t
+
+    wrapImport tscope scope (SIOType t) x = BindIO
+        :@ bt :$ x
+        :@ t :$ (bt :\ marshallIn tscope (bt :^ scope) t (Var SZero))
       where
-        t' = SLlvmType $ sMarshall t
+        bt = SBackendType $ sMarshall t
 
     wrapExport tscope scope (SIOType (t :: SType tscope tx)) x
         = withProof (subIncElim tscope SZero t' t Refl)
         $ BindIO :@ t :$ x :@ t' :$ (t :\ PureIO :@ t'
             :$ marshallOut tscope (t :^ scope) t (Var SZero))
       where
-        t' :: SType tscope ('LlvmType (Marshall tx))
-        t' = SLlvmType $ sMarshall t
+        t' :: SType tscope ('BackendType (Marshall tx))
+        t' = SBackendType $ sMarshall t
+
+    bindImport tscope scope (SIOType t) ex cont
+        = withProof (subIncElim tscope SZero t (SIOType tx) Refl)
+        $ withProof (insZeroP tx scope)
+        $ BindIO :@ tx :$ ex :@ t :$ (tx :\ cont (tx :^ scope)
+            (incrementExpr tscope scope SZero tx) (Var SZero))
+      where
+        SIOType tx = exprType tscope scope ex
+
+    bindExport tscope scope (SIOType (t :: SType tscope t)) ex cont
+        = withProof (subIncElim tscope SZero t' (SIOType tx) Refl)
+        $ withProof (insZeroP tx scope)
+        $ BindIO :@ tx :$ ex :@ t' :$ (tx :\ cont (tx :^ scope)
+            (incrementExpr tscope scope SZero tx) (Var SZero))
+      where
+        SIOType tx = exprType tscope scope ex
+
+        t' :: SType tscope ('BackendType (Marshall t))
+        t' = SBackendType $ sMarshall t
 
 instance (MarshallableType tx, IsOpType (Marshall tx) ~ 'True
     , HasForeignType ty) => HasForeignType (tx :-> ty)
@@ -282,60 +336,89 @@ instance (MarshallableType tx, IsOpType (Marshall tx) ~ 'True
     type ForeignRet (_ :-> ty) = ForeignRet ty
     sForeignRet (SArrow _ ty) = sForeignRet ty
 
+    type InternalRet (_ :-> ty) = InternalRet ty
+    sInternalRet (SArrow _ ty) = sInternalRet ty
+
     wrapImport tscope scope (SArrow tx ty) x = tx
         :\ wrapImport tscope (tx :^ scope) ty
             ( withProof (insZeroP tx scope)
             $ incrementExpr tscope scope SZero tx x
                 :$ marshallOut tscope (tx :^ scope) tx (Var SZero)
             )
-    
-    wrapExport tscope scope (SArrow tx ty) x = tx'
-        :\ wrapExport tscope (tx' :^ scope) ty
-            (withProof (insZeroP tx' scope)
-            $ incrementExpr tscope scope SZero tx' x
-                :$ marshallIn tscope (tx' :^ scope) tx (Var SZero)
-            )
+
+    wrapExport tscope scope (SArrow tx ty) ex = withProof (insZeroP tx' scope)
+        $ tx' :\ bindExport tscope scope' ty
+            (marshallIn tscope scope' tx $ Var SZero)
+            (\sc inc ey -> wrapExport tscope sc ty
+                $ inc (incrementExpr tscope scope SZero tx' ex) :$ ey)
       where
-        tx' = SLlvmType $ sMarshall tx
+        tx' = SBackendType $ sMarshall tx
+        scope' = tx' :^ scope
+
+    bindImport tscope scope (SArrow tx ty) ex ef = withProof (insZeroP tx scope)
+        $ tx :\ bindImport tscope (tx :^ scope) ty
+            (incrementExpr tscope scope SZero tx ex)
+            (\scope' inc' ey
+                -> ef scope' (inc' . incrementExpr tscope scope SZero tx) ey
+                :$ inc' (Var SZero))
+
+    bindExport tscope scope (SArrow (tx :: SType tscope tx) ty) ex ef
+        = withProof (insZeroP tx' scope)
+        $ tx' :\ bindExport tscope (tx' :^ scope) ty
+            (incrementExpr tscope scope SZero tx' ex)
+            (\scope' inc' ey
+                -> ef scope' (inc' . incrementExpr tscope scope SZero tx') ey
+                :$ inc' (Var SZero))
+      where
+        tx' :: SType tscope ('BackendType (Marshall tx))
+        tx' = SBackendType $ sMarshall tx
 
 -- | The foreign type corresponding to a native type.
 type ForeignType t = BuildForeignType (ForeignArgs t) (ForeignRet t)
 
--- | Builds a type from a list of argument t'LlvmType' and a return t'LlvmType'.
-type BuildForeignType :: [LlvmType] -> LlvmType -> Type
+-- | Singleton version of 'ForeignType'.
+sForeignType
+    :: HasForeignType t => SType tscope t -> SType tscope (ForeignType t)
+sForeignType t = sBuildForeignType (sForeignArgs t) (sForeignRet t)
+
+{-|
+    Builds a type from a list of argument t'BackendType' and a return
+    t'BackendType'.
+-}
+type BuildForeignType :: [BackendType] -> BackendType -> Type
 type family BuildForeignType ltargs ltret where
-    BuildForeignType '[] ltret = 'IOType ('LlvmType ltret)
+    BuildForeignType '[] ltret = 'IOType ('BackendType ltret)
     BuildForeignType (ltarg ': ltargs) ltret
-        = 'LlvmType ltarg :-> BuildForeignType ltargs ltret
+        = 'BackendType ltarg :-> BuildForeignType ltargs ltret
 
 -- | Singleton version of 'BuildForeignType'.
 sBuildForeignType
-    :: SList SLlvmType ltargs -> SLlvmType ltret
+    :: SList SBackendType ltargs -> SBackendType ltret
     -> SType tscope (BuildForeignType ltargs ltret)
-sBuildForeignType SNil ltret = SIOType $ SLlvmType ltret
+sBuildForeignType SNil ltret = SIOType $ SBackendType ltret
 sBuildForeignType (ltarg :^ ltargs) ltret
-    = SLlvmType ltarg :-> sBuildForeignType ltargs ltret
+    = SBackendType ltarg :-> sBuildForeignType ltargs ltret
 
--- | The type is isomorphic to and can be marshalled to and from an t'LlvmType'.
+-- | The type is isomorphic to a t'BackendType'.
 type MarshallableType :: Type -> Kind.Constraint
 class t ~ Unmarshall (Marshall t) => MarshallableType t where
-    -- | The t'LlvmType' corresponding to a native type.
-    type Marshall t :: LlvmType
+    -- | The t'BackendType' corresponding to a native type.
+    type Marshall t :: BackendType
 
     -- | Singleton version of 'Marshall'.
-    sMarshall :: SType scope t -> SLlvmType (Marshall t)
+    sMarshall :: SType scope t -> SBackendType (Marshall t)
 
-    -- | Marshalls an expression from the t'LlvmType' to the native type.
+    -- | Marshalls an expression from the t'BackendType' to the native type.
     marshallIn
         :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
-        -> Expr tscope scope ('LlvmType (Marshall t))
-        -> Expr tscope scope t
+        -> Expr tscope scope ('BackendType (Marshall t))
+        -> Expr tscope scope ('IOType t)
     
-    -- | Marshalls an expression from the native type to the t'LlvmType'.
+    -- | Marshalls an expression from the native type to the t'BackendType'.
     marshallOut
         :: SNat tscope -> SList (SType tscope) scope -> SType tscope t
         -> Expr tscope scope t
-        -> Expr tscope scope ('LlvmType (Marshall t))
+        -> Expr tscope scope ('BackendType (Marshall t))
     
     -- | Proof that 'Increment' is a no-op, i.e. the type is closed.
     incMarshall
@@ -348,28 +431,30 @@ class t ~ Unmarshall (Marshall t) => MarshallableType t where
         -> t :~: Substitute idx tsub t
 
 instance MarshallableType UnitType where
-    type Marshall UnitType = 'LlvmInt 'Zero
-    sMarshall _ = SLlvmInt SZero
+    type Marshall UnitType = 'BackendInt 'Zero
+    sMarshall _ = SBackendInt SZero
 
-    marshallIn _ _ _ _ = TypeLam $ STypeVar SZero :\ Var SZero
+    marshallIn _ _ _ _
+        = PureIO :@ SUnitType :$ TypeLam (STypeVar SZero :\ Var SZero)
     
-    marshallOut _ _ _ _ = LlvmOperand (SLlvmInt SZero) ()
+    marshallOut _ _ _ = (:$ BackendOperand (SBackendInt SZero) Backend.Empty)
+        . (:@ SBackendType (SBackendInt SZero))
 
     incMarshall _ _ = Refl
 
     subMarshall _ _ _ = Refl
 
 instance MarshallableType BitType where
-    type Marshall BitType = 'LlvmInt ('Succ 'Zero)
-    sMarshall _ = SLlvmInt $ SSucc SZero
+    type Marshall BitType = 'BackendInt ('Succ 'Zero)
+    sMarshall _ = SBackendInt $ SSucc SZero
 
-    marshallIn _ _ _ = TestBit
+    marshallIn _ _ _ = (TestBit :$)
 
-    marshallOut _ _ _ x = x :@ SLlvmType lt
-        :$ LlvmOperand lt (LLVM.ConstantOperand $ LLVM.Constant.Int 1 1)
-        :$ LlvmOperand lt (LLVM.ConstantOperand $ LLVM.Constant.Int 1 0)
+    marshallOut _ _ _ x = x :@ SBackendType lt
+        :$ BackendOperand lt (Backend.Constant Backend.B1)
+        :$ BackendOperand lt (Backend.Constant Backend.B0)
       where
-        lt = SLlvmInt $ SSucc SZero
+        lt = SBackendInt $ SSucc SZero
 
     incMarshall _ _ = Refl
 
@@ -379,37 +464,52 @@ instance (t ~ BitTuple (ArgCount t), ArgCount t ~ 'Succ _n)
     => MarshallableType ('Forall ((BitType :-> t) :-> 'TypeVar 'Zero))
   where
     type Marshall ('Forall ((BitType :-> t) :-> 'TypeVar 'Zero))
-        = 'LlvmInt ('Succ (ArgCount t))
-    sMarshall (SForall (SArrow t _)) = SLlvmInt $ sArgCount t
+        = 'BackendInt ('Succ (ArgCount t))
+    sMarshall (SForall (SArrow t _)) = SBackendInt $ sArgCount t
 
-    marshallIn tscope scope t x = TypeLam $ tx :\ withProof (ltSucc size)
-        ( withProof (insZeroP tx scope')
-        $ marshallTuple (SSucc tscope) (tx :^ scope') size size
-            ( withProof (insZeroP tx scope')
-            $ incrementExpr (SSucc tscope) scope' SZero tx
-            $ incrementExprType tscope scope SZero x
-            )
-        $ Var SZero
-        )
+    marshallIn tscope scope t x = withProof (ltSucc size)
+        $ marshallTuple tscope scope size size t x $ \_ _ cont
+        -> PureIO :@ t :$ TypeLam (tx :\ cont (Var SZero))
       where
         size = sArgCount tx
         SForall (SArrow tx _) = t
-        scope' = sIncrementAll tscope SZero scope
 
         marshallTuple
-            :: forall tscope scope n size. (CmpNat n ('Succ size) ~ 'LT)
-            => SNat ('Succ tscope) -> SList (SType ('Succ tscope)) scope
-            -> SNat n -> SNat size
-            -> Expr ('Succ tscope) scope ('LlvmType ('LlvmInt size))
-            -> Expr ('Succ tscope) scope (BitTuple n)
-            -> Expr ('Succ tscope) scope ('TypeVar 'Zero)
-        marshallTuple _ _ SZero _ _ er = er
-        marshallTuple tsc sc (SSucc idx) size' ex er
-            = withProof (ltSuccLToLT idx (SSucc size') Refl)
-            $ marshallTuple tsc sc idx size' ex
-            $ er :$ marshallIn tsc sc SBitType (IsolateBit idx size' :$ ex)
-    
-    marshallOut tscope scope t x = x :@ SLlvmType (sMarshall t)
+            :: forall tscope scope n size tr. (CmpNat n ('Succ size) ~ 'LT)
+            => SNat tscope -> SList (SType tscope) scope
+            -> SNat n -> SNat size -> SType tscope tr
+            -> Expr tscope scope ('BackendType ('BackendInt size))
+            -> (forall scope'. SList (SType tscope) scope'
+                -> (forall tx. Expr ('Succ tscope) (IncrementAll 'Zero scope) tx
+                    -> Expr ('Succ tscope)
+                        (BitTuple size ': IncrementAll 'Zero scope') tx)
+                -> (Expr ('Succ tscope)
+                    (BitTuple size ': IncrementAll 'Zero scope') (BitTuple n)
+                    -> Expr ('Succ tscope)
+                        (BitTuple size ': IncrementAll 'Zero scope')
+                        ('TypeVar 'Zero))
+                -> Expr tscope scope' ('IOType tr))
+            -> Expr tscope scope ('IOType tr)
+        marshallTuple tsc sc SZero size' _ _ cont
+            = withProof (insZeroP (sBitTuple size')
+                $ sIncrementAll tsc SZero sc)
+            $ cont sc (incrementExpr (SSucc tsc) (sIncrementAll tsc SZero sc)
+                SZero $ sBitTuple size') id
+        marshallTuple tsc sc (SSucc idx) size' tr ex cont = BindIO
+            :@ SBitType :$ marshallIn tsc sc SBitType
+                (IsolateBit idx size' :$ ex)
+            :@ tr :$ withProof (ltSuccLToLT idx (SSucc size') Refl) (withProof
+                (insZeroP SBitType $ sIncrementAll tsc SZero sc)
+                $ withProof (insZeroP SBitType sc)
+                $ SBitType
+                :\ marshallTuple tsc (SBitType :^ sc) idx size' tr
+                    (incrementExpr tsc sc SZero SBitType ex)
+                    (\sc' inc cont' -> cont sc'
+                        (inc . incrementExpr (SSucc tsc)
+                            (sIncrementAll tsc SZero sc) SZero SBitType)
+                        $ \er -> cont' $ er :$ inc (Var SZero)))
+
+    marshallOut tscope scope t x = x :@ SBackendType (sMarshall t)
         :$ marshallTuple tscope scope size (const $ const id)
       where
         size = sArgCount tx
@@ -420,10 +520,11 @@ instance (t ~ BitTuple (ArgCount t), ArgCount t ~ 'Succ _n)
             -> SNat size
             -> (forall scope'. SList (SType tscope) scope'
                 -> (forall t2. Expr tscope scope t2 -> Expr tscope scope' t2)
-                -> Expr tscope scope' ('LlvmType ('LlvmInt size))
+                -> Expr tscope scope' ('BackendType ('BackendInt size))
                 -> Expr tscope scope' tr)
             -> Expr tscope scope (Substitute 'Zero tr (BitTuple size))
-        marshallTuple _ sc SZero f = f sc id $ LlvmOperand (SLlvmInt SZero) ()
+        marshallTuple _ sc SZero f
+            = f sc id $ BackendOperand (SBackendInt SZero) Backend.Empty
         marshallTuple tsc sc (SSucc size') f = SBitType
             :\ marshallTuple tsc (SBitType :^ sc) size' (\sc' inc ex -> f sc'
                 (withProof (insZero @BitType sc)
@@ -478,23 +579,24 @@ sArgCount (SArrow _ tr) = SSucc $ sArgCount tr
 sArgCount (SForall _) = SZero
 sArgCount (SIOType _) = SZero
 sArgCount (SPointerType _ _) = SZero
-sArgCount (SLlvmType _) = SZero
+sArgCount (SBackendType _) = SZero
 
 {-|
-    Converts an t'LlvmType' to an isomorphic native type. Inverse of 'Marshall'.
+    Converts a t'BackendType' to an isomorphic native type. Inverse of
+    'Marshall'.
 -}
-type Unmarshall :: LlvmType -> Type
+type Unmarshall :: BackendType -> Type
 type family Unmarshall lt where
-    Unmarshall ('LlvmInt 'Zero) = 'Forall ('TypeVar 'Zero :-> 'TypeVar 'Zero)
-    Unmarshall ('LlvmInt ('Succ 'Zero)) = BitType
-    Unmarshall ('LlvmInt size) = 'Forall (BitTuple size :-> 'TypeVar 'Zero)
+    Unmarshall ('BackendInt 'Zero) = 'Forall ('TypeVar 'Zero :-> 'TypeVar 'Zero)
+    Unmarshall ('BackendInt ('Succ 'Zero)) = BitType
+    Unmarshall ('BackendInt size) = 'Forall (BitTuple size :-> 'TypeVar 'Zero)
 
 -- | Singleton version of 'Unmarshall'.
-sUnmarshall :: SLlvmType lt -> SType tscope (Unmarshall lt)
-sUnmarshall (SLlvmInt SZero) = SForall $ STypeVar SZero :-> STypeVar SZero
-sUnmarshall (SLlvmInt (SSucc SZero))
+sUnmarshall :: SBackendType lt -> SType tscope (Unmarshall lt)
+sUnmarshall (SBackendInt SZero) = SForall $ STypeVar SZero :-> STypeVar SZero
+sUnmarshall (SBackendInt (SSucc SZero))
     = SForall $ STypeVar SZero :-> STypeVar SZero :-> STypeVar SZero
-sUnmarshall (SLlvmInt size@(SSucc (SSucc _)))
+sUnmarshall (SBackendInt size@(SSucc (SSucc _)))
     = SForall $ sBitTuple size :-> STypeVar SZero
 
 -- | Gets the type of an expression.
@@ -511,8 +613,9 @@ exprType tscope scope = \case
     TypeLam ex -> SForall
         $ exprType (SSucc tscope) (sIncrementAll tscope SZero scope) ex
     Addr _ pk tx -> SPointerType pk tx
-    LlvmOperand lt _ -> SLlvmType lt
-    LlvmIO lt _ -> SIOType $ SLlvmType lt
+    BackendOperand lt _ -> SBackendType lt
+    BackendIO lt _ -> SIOType $ SBackendType lt
+    BackendPIO lta lt _ -> SBackendType lta :-> SIOType (SBackendType lt)
     PureIO -> SForall $ STypeVar SZero :-> SIOType (STypeVar SZero)
     BindIO -> SForall $ SIOType (STypeVar SZero)
         :-> SForall ((STypeVar (SSucc SZero) :-> SIOType (STypeVar SZero))
@@ -521,13 +624,13 @@ exprType tscope scope = \case
             :-> SIOType (STypeVar SZero)
     StorePointer -> SForall $ SPointerType SWritePointer (STypeVar SZero)
             :-> STypeVar SZero :-> SIOType SUnitType
-    Call _ _ ltargs ltret -> sBuildForeignType ltargs ltret
-    IsolateBit _ size
-        -> SLlvmType (SLlvmInt size) :-> SLlvmType (SLlvmInt $ SSucc SZero)
-    InsertBit size -> SLlvmType (SLlvmInt $ SSucc SZero)
-        :-> SLlvmType (SLlvmInt size)
-        :-> SLlvmType (SLlvmInt (SSucc size))
-    TestBit _ -> SBitType
+    Call _ ltargs ltret -> sBuildForeignType ltargs ltret
+    IsolateBit _ size -> SBackendType (SBackendInt size)
+        :-> SBackendType (SBackendInt $ SSucc SZero)
+    InsertBit size -> SBackendType (SBackendInt $ SSucc SZero)
+        :-> SBackendType (SBackendInt size)
+        :-> SBackendType (SBackendInt (SSucc size))
+    TestBit -> SBackendType (SBackendInt $ SSucc SZero) :-> SIOType SBitType
 
 -- | Increments every type in a list.
 type IncrementAll :: Nat -> [Type] -> [Type]
@@ -539,9 +642,14 @@ type family IncrementAll idx ts where
 sIncrementAll
     :: SNat scope -> SNat idx -> SList (SType scope) ts
     -> SList (SType ('Succ scope)) (IncrementAll idx ts)
-sIncrementAll _ _ SNil = SNil
-sIncrementAll scope idx (t :^ ts)
-    = sIncrement scope idx t :^ sIncrementAll scope idx ts
+sIncrementAll scope idx = sIncrementAll' (sIncrement scope idx) idx
+
+-- | Generalised version of 'sIncrementAll'.
+sIncrementAll'
+    :: (forall t. proxy t -> proxy' (Increment idx t))
+    -> SNat idx -> SList proxy ts -> SList proxy' (IncrementAll idx ts)
+sIncrementAll' _ _ SNil = SNil
+sIncrementAll' inc idx (t :^ ts) = inc t :^ sIncrementAll' inc idx ts
 
 -- | Substitutes every type in a list.
 type SubstituteAll :: Nat -> Type -> [Type] -> [Type]
@@ -584,16 +692,17 @@ incrementExpr tscope scope idx tnew = \case
         $ incrementExpr (SSucc tscope) (sIncrementAll tscope SZero scope)
             idx (Proxy @(Increment 'Zero tnew)) ex
     Addr addr pk tx -> Addr addr pk tx
-    LlvmOperand lt op -> LlvmOperand lt op
-    LlvmIO lt op -> LlvmIO lt op
+    BackendOperand lt op -> BackendOperand lt op
+    BackendIO lt op -> BackendIO lt op
+    BackendPIO lta lt pio -> BackendPIO lta lt pio
     PureIO -> PureIO
     BindIO -> BindIO
     LoadPointer -> LoadPointer
     StorePointer -> StorePointer
-    Call fop aops ltargs ltret -> Call fop aops ltargs ltret
+    Call fop ltargs ltret -> Call fop ltargs ltret
     IsolateBit bidx size -> IsolateBit bidx size
     InsertBit size -> InsertBit size
-    TestBit ex -> TestBit $ incrementExpr tscope scope idx tnew ex
+    TestBit -> TestBit
 
 -- | Substitutes a variable at the given index.
 substituteExpr
@@ -632,16 +741,17 @@ substituteExpr tscope scope idx sub = \case
         $ substituteExpr (SSucc tscope) (sIncrementAll tscope SZero scope) idx
             (incrementExprType tscope (sRemove idx scope) SZero sub) ex
     Addr addr pk tx -> Addr addr pk tx
-    LlvmOperand lt op -> LlvmOperand lt op
-    LlvmIO lt op -> LlvmIO lt op
+    BackendOperand lt op -> BackendOperand lt op
+    BackendIO lt op -> BackendIO lt op
+    BackendPIO lta lt pio -> BackendPIO lta lt pio
     PureIO -> PureIO
     BindIO -> BindIO
     LoadPointer -> LoadPointer
     StorePointer -> StorePointer
-    Call fop aops ltargs ltret -> Call fop aops ltargs ltret
+    Call fop ltargs ltret -> Call fop ltargs ltret
     IsolateBit bidx size -> IsolateBit bidx size
     InsertBit size -> InsertBit size
-    TestBit ex -> TestBit $ substituteExpr tscope scope idx sub ex
+    TestBit -> TestBit
 
 -- | Introduces a type variable at the given type index.
 incrementExprType
@@ -669,17 +779,18 @@ incrementExprType tscope scope idx = \case
             (SSucc idx) ex
     Addr addr pk tx -> withProof (incMarshall idx tx)
         $ Addr addr pk $ sIncrement tscope idx tx
-    LlvmOperand lt op -> LlvmOperand lt op
-    LlvmIO lt op -> LlvmIO lt op
+    BackendOperand lt op -> BackendOperand lt op
+    BackendIO lt op -> BackendIO lt op
+    BackendPIO lta lt pio -> BackendPIO lta lt pio
     PureIO -> PureIO
     BindIO -> BindIO
     LoadPointer -> LoadPointer
     StorePointer -> StorePointer
-    Call fop aops ltargs ltret -> withProof (incForeign idx ltargs ltret)
-        $ Call fop aops ltargs ltret
+    Call fop ltargs ltret -> withProof (incForeign idx ltargs ltret)
+        $ Call fop ltargs ltret
     IsolateBit bidx size -> IsolateBit bidx size
     InsertBit size -> InsertBit size
-    TestBit ex -> TestBit $ incrementExprType tscope scope idx ex
+    TestBit -> TestBit
 
 -- | Substitutes a type variable at the given type index.
 substituteExprType
@@ -707,17 +818,18 @@ substituteExprType tscope scope idx tsub = withProofs $ \case
         (sIncrement tscope SZero tsub) ex
     Addr addr pk tx -> withProof (subMarshall idx tsub tx)
         $ Addr addr pk $ sSubstitute tscope idx tsub tx
-    LlvmOperand lt op -> LlvmOperand lt op
-    LlvmIO lt op -> LlvmIO lt op
+    BackendOperand lt op -> BackendOperand lt op
+    BackendIO lt op -> BackendIO lt op
+    BackendPIO lta lt pio -> BackendPIO lta lt pio
     PureIO -> PureIO
     BindIO -> BindIO
     LoadPointer -> LoadPointer
     StorePointer -> StorePointer
-    Call fop aops ltargs ltret -> withProof (subForeign idx tsub ltargs ltret)
-        $ Call fop aops ltargs ltret
+    Call fop ltargs ltret -> withProof (subForeign idx tsub ltargs ltret)
+        $ Call fop ltargs ltret
     IsolateBit bidx size -> IsolateBit bidx size
     InsertBit size -> InsertBit size
-    TestBit ex -> TestBit $ substituteExprType tscope scope idx tsub ex
+    TestBit -> TestBit
   where
     withProofs
         :: (SubstituteAll ('Succ idx) (Increment 'Zero tsub)
@@ -873,3 +985,4 @@ countBitTuple (SSucc size) = withProof (countBitTuple size) Refl
 {-# RULES "Proof/countBitTuple" countBitTuple
     = \_ -> Unsafe.unsafeCoerce Refl #-}
 {-# INLINE [1] countBitTuple #-}
+
